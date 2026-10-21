@@ -301,9 +301,10 @@ export async function cfgAlias(page, offset) {
     return new DataView(d.buffer, d.byteOffset, d.length).getUint32(o, true);
   }, offset);
 }
-export async function bind(page, offset, press, expected, what) {
+// Presses up to `tries` times: 1 checks that a single press is enough.
+export async function bind(page, offset, press, expected, what, tries = 4) {
   await menuKey(page, 'Enter', `editing ${what}`);
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < tries; i++) {
     await press();
     const end = Date.now() + 1500;
     while (Date.now() < end) {
@@ -315,7 +316,7 @@ export async function bind(page, offset, press, expected, what) {
 }
 // data/bb.cfg: vsync, fullscreen (1 byte each), language (int), then the
 // keys as ints: P1 UP, DOWN, LEFT, RIGHT, FIRE, JUMP, SPECIAL, then P2.
-export const P1_UP = 6, P1_RIGHT = 18;
+export const P1_UP = 6, P1_RIGHT = 18, P1_JUMP = 26;
 
 // Main menu -> OPTIONS -> PLAYER 1 CONTROL, with UP focused.
 export async function toKeysMenu(page) {

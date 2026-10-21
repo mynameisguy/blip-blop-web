@@ -230,6 +230,7 @@ void Input::webAddJoystick(int device)
 
 	const char * name = SDL_JoystickName(j);
 	memset(&js[k], 0, sizeof(js[k]));
+	web_hat[k] = 0;
 	js[k].handle = j;
 	strncpy(js[k].name, name ? name : "", sizeof(js[k].name) - 1);
 	if (k >= n_joy)
@@ -266,6 +267,7 @@ bool Input::webEvent(SDL_Event & e)
 			if (k >= 0) {
 				SDL_JoystickClose(js[k].handle);
 				memset(&js[k], 0, sizeof(js[k]));
+				web_hat[k] = 0;
 				while (n_joy > 0 && js[n_joy - 1].handle == NULL)
 					n_joy--;
 				debug << "Joystick " << (k + 1) << " disconnected\n";
@@ -281,21 +283,37 @@ bool Input::webEvent(SDL_Event & e)
 			e.jbutton.which = k;
 			return true;
 
+		// Directions are read from the pad state in webPollDirections().
 		case SDL_JOYHATMOTION:
 			k = webJoystickSlot(e.jhat.which);
-			if (k < 0)
-				return false;
-			e.jhat.which = k;
-			return true;
+			if (k >= 0)
+				web_hat[k] = e.jhat.value;
+			return false;
 
 		case SDL_JOYAXISMOTION:
-			k = webJoystickSlot(e.jaxis.which);
-			if (k < 0)
-				return false;
-			e.jaxis.which = k;
-			return true;
+			return false;
 	}
 	return true;
+}
+
+// Sets each pad's directions from its stick (axes 0 and 1, same dead zone
+// as the axis events natively) and its hat. SDL takes the first value it
+// sees on an axis as the rest position and sends no event for it, and the
+// browser reports no starting value, so the first push after a pad connects
+// would be lost if only axis events were used. SDL_JoystickGetAxis has it.
+void Input::webPollDirections()
+{
+	for (int k = 0; k < n_joy; k++) {
+		SDL_Joystick * j = js[k].handle;
+		if (j == NULL)
+			continue;
+		int x = SDL_JoystickNumAxes(j) > 0 ? SDL_JoystickGetAxis(j, 0) : 0;
+		int y = SDL_JoystickNumAxes(j) > 1 ? SDL_JoystickGetAxis(j, 1) : 0;
+		js[k].directions.left = x < -DEAD_ZONE || (web_hat[k] & SDL_HAT_LEFT);
+		js[k].directions.right = x > DEAD_ZONE || (web_hat[k] & SDL_HAT_RIGHT);
+		js[k].directions.up = y < -DEAD_ZONE || (web_hat[k] & SDL_HAT_UP);
+		js[k].directions.down = y > DEAD_ZONE || (web_hat[k] & SDL_HAT_DOWN);
+	}
 }
 #endif
 
@@ -414,6 +432,9 @@ void Input::update()
 		}
 
 	}
+#ifdef __EMSCRIPTEN__
+	webPollDirections();
+#endif
 	/*if (dikeyb != NULL)
 		dikeyb->GetDeviceState(sizeof(buffer), (void *)&buffer);
 

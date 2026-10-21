@@ -8,10 +8,12 @@
 //   3. AZERTY: the physical Q key binds as "a" (the layout's key, as native
 //      SDL gives), walks the player, and is released when the window loses
 //      focus while it is held.
-//   4. gamepad: a pad that appears after load (as browsers only show a pad
-//      once a button is pressed) binds in the keys menu (JOY1 BUTTON0 =
-//      0x400, JOY1 RIGHT = 0x467, the native codes) and its stick walks the
-//      player in a level; unplugging it is harmless.
+//   4. gamepad: a pad appears after load, when a button is pressed (as
+//      browsers only show a pad then), and that press counts. Single presses
+//      and stick pushes bind in the keys menu (JOY1 BUTTON0 = 0x400, JOY1
+//      RIGHT = 0x467, JOY1 BUTTON1 = 0x401, the native codes), walk and jump
+//      in a level, and still do after the pad is unplugged and plugged back
+//      in mid-level. No pad input is retried.
 //
 // Every step waits on the game's state (read from each frame through
 // Module.onFrame) and retries a key press the game missed, so it does not
@@ -21,7 +23,7 @@
 // Exits 0 when every check passes. Needs playwright (CHROMIUM_PATH optional).
 import {
   setup, check, finish, scenario, screenshot, sleep, newGamePage, hold, holdRepeating, grab, scroll, walked,
-  fmt, blurWindow, toMainMenu, startGame, toKeysMenu, keysMenuToStart, menuKey, bind, P1_UP, P1_RIGHT,
+  fmt, blurWindow, toMainMenu, startGame, toKeysMenu, keysMenuToStart, menuKey, bind, P1_UP, P1_RIGHT, P1_JUMP,
 } from './game_driver.mjs';
 
 const [,, url = 'http://localhost:8000/', outDir] = process.argv;
@@ -168,66 +170,104 @@ await scenario('AZERTY', async () => {
 });
 
 // --- 4. gamepad --------------------------------------------------------------
+// Strict: every pad press or push below happens once, with no retry.
 await scenario('gamepad', async () => {
   // A standard-mapping pad the page cannot see until bbPadConnect(), as a
-  // browser only shows a pad once a button is pressed after load.
+  // browser only shows a pad once a button is pressed after load. Each
+  // connect is a new pad object, as after unplugging and plugging back.
   const fakePad = () => {
-    const pad = {
-      id: 'Simulated pad (STANDARD GAMEPAD Vendor: 045e Product: 028e with a long browser name)',
-      index: 0, connected: true, mapping: 'standard', timestamp: 1, axes: [0, 0, 0, 0],
-      buttons: Array.from({ length: 17 }, () => ({ pressed: false, touched: false, value: 0 })),
+    let pad = null;
+    let ts = 1;
+    navigator.getGamepads = () => [pad, null, null, null];
+    const send = (type, p) => { const e = new Event(type); e.gamepad = p; window.dispatchEvent(e); };
+    // pressed: the button whose press made the browser show the pad.
+    window.bbPadConnect = pressed => {
+      pad = {
+        id: 'Simulated pad (STANDARD GAMEPAD Vendor: 045e Product: 028e with a long browser name)',
+        index: 0, connected: true, mapping: 'standard', timestamp: ts++, axes: [0, 0, 0, 0],
+        buttons: Array.from({ length: 17 }, (_, i) => ({ pressed: i === pressed, touched: i === pressed, value: i === pressed ? 1 : 0 })),
+      };
+      send('gamepadconnected', pad);
     };
-    let visible = false;
-    navigator.getGamepads = () => [visible ? pad : null, null, null, null];
-    const send = type => { const e = new Event(type); e.gamepad = pad; window.dispatchEvent(e); };
-    window.bbPadConnect = () => { visible = true; pad.connected = true; send('gamepadconnected'); };
-    window.bbPadDisconnect = () => { visible = false; pad.connected = false; send('gamepaddisconnected'); };
+    window.bbPadDisconnect = () => { const p = pad; pad = null; p.connected = false; send('gamepaddisconnected', p); };
     window.bbPadButton = (i, down) => {
       pad.buttons[i] = { pressed: down, touched: down, value: down ? 1 : 0 };
-      pad.timestamp++;
+      pad.timestamp = ts++;
     };
-    window.bbPadAxis = (i, v) => { pad.axes[i] = v; pad.timestamp++; };
+    window.bbPadAxis = (i, v) => { pad.axes[i] = v; pad.timestamp = ts++; };
   };
   const { context, page, errors } = await newGamePage({ initScripts: [fakePad] });
-  await page.evaluate(() => window.bbPadConnect());
+  const pad = (fn, ...args) => page.evaluate(([fn, args]) => window[fn](...args), [fn, args]);
+  const button = async (i, ms = 150) => { await pad('bbPadButton', i, true); await sleep(ms); await pad('bbPadButton', i, false); };
+  const stick = async ms => { await pad('bbPadAxis', 0, 1); await sleep(ms); await pad('bbPadAxis', 0, 0); };
+  // Presses the jump button once and measures the player's rise.
+  const jump = async name => {
+    await sleep(1200);                  // back on the ground
+    const a = await grab(page);
+    await pad('bbPadButton', 1, true);
+    await sleep(250);
+    const b = await grab(page, name);
+    await pad('bbPadButton', 1, false);
+    return a.player && b.player ? b.player.y - a.player.y : NaN;
+  };
+  const walk = async name => {
+    await sleep(500);
+    const a = await grab(page);
+    await stick(1200);
+    const b = await grab(page, name);
+    return walked(a, b);
+  };
+
   await toMainMenu(page);
   await toKeysMenu(page);
-
-  const button = await bind(page, P1_UP, async () => {
-    await page.evaluate(() => window.bbPadButton(0, true));
+  // The press that makes the browser show the pad binds UP.
+  const up = await bind(page, P1_UP, async () => {
+    await pad('bbPadConnect', 0);
     await sleep(150);
-    await page.evaluate(() => window.bbPadButton(0, false));
-  }, 0x400, 'UP');
-  check(button === 0x400, 'pad connected after load: button 0 binds as JOY1 BUTTON0 (0x400)', '0x' + button.toString(16));
+    await pad('bbPadButton', 0, false);
+  }, 0x400, 'UP', 1);
+  check(up === 0x400, 'the button press that connects the pad binds UP as JOY1 BUTTON0 (0x400)', '0x' + up.toString(16));
 
   for (let i = 0; i < 3; i++) await menuKey(page, 'ArrowDown', 'RIGHT');
-  const right = await bind(page, P1_RIGHT, async () => {
-    await page.evaluate(() => window.bbPadAxis(0, 1));
-    await sleep(150);
-    await page.evaluate(() => window.bbPadAxis(0, 0));
-  }, 0x400 + 103, 'RIGHT');
-  await screenshot(page, 'pad-1-keys-menu');
-  check(right === 0x467, 'stick right binds as JOY1 RIGHT (0x467)', '0x' + right.toString(16));
+  const right = await bind(page, P1_RIGHT, () => stick(150), 0x400 + 103, 'RIGHT', 1);
+  check(right === 0x467, 'the first stick push binds RIGHT as JOY1 RIGHT (0x467)', '0x' + right.toString(16));
 
-  await keysMenuToStart(page, 3);
+  for (let i = 0; i < 2; i++) await menuKey(page, 'ArrowDown', 'JUMP');
+  const jumpCode = await bind(page, P1_JUMP, () => button(1), 0x401, 'JUMP', 1);
+  await screenshot(page, 'pad-1-keys-menu');
+  check(jumpCode === 0x401, 'one press of button 1 binds JUMP as JOY1 BUTTON1 (0x401)', '0x' + jumpCode.toString(16));
+
+  await keysMenuToStart(page, 5);
   await startGame(page);
-  const a = await grab(page);
-  await page.evaluate(() => window.bbPadAxis(0, 1));
-  await sleep(1200);
-  const b = await grab(page, 'pad-2-after-stick');
-  await page.evaluate(() => window.bbPadAxis(0, 0));
-  check(walked(a, b) >= 60, 'pushing the stick right walks the player right', `walked ${fmt(walked(a, b))}px`);
-  await sleep(500);
+  const w1 = await walk('pad-2-after-stick');
+  check(w1 >= 60, 'pushing the stick right walks the player right', `walked ${fmt(w1)}px`);
+  await sleep(300);
   const c = await grab(page);
   await sleep(600);
   const d = await grab(page);
   check(Math.abs(walked(c, d)) < 3, 'player stops when the stick is released', `moved ${fmt(walked(c, d))}px`);
+  const j1 = await jump('pad-3-jump');
+  check(j1 <= -10, 'button 1 jumps', `player rose ${fmt(-j1)}px`);
 
-  await page.evaluate(() => window.bbPadDisconnect());
+  await pad('bbPadDisconnect');
   const f0 = await page.evaluate(() => window.bbFrames);
   await sleep(1000);
   const f1 = await page.evaluate(() => window.bbFrames);
   check(f1 - f0 > 20, 'the game keeps running after the pad is unplugged', `${f1 - f0} frames in 1 s`);
+
+  // Plugged back in mid-level by pressing the jump button: that press jumps.
+  await sleep(1200);
+  const a = await grab(page);
+  await pad('bbPadConnect', 1);
+  await sleep(250);
+  const b = await grab(page, 'pad-4-reconnect-jump');
+  await pad('bbPadButton', 1, false);
+  const j2 = a.player && b.player ? b.player.y - a.player.y : NaN;
+  check(j2 <= -10, 'after a reconnect, the press that connects the pad jumps', `player rose ${fmt(-j2)}px`);
+  const w2 = await walk('pad-5-reconnect-stick');
+  check(w2 >= 60, 'after a reconnect, the first stick push walks', `walked ${fmt(w2)}px`);
+  const j3 = await jump();
+  check(j3 <= -10, 'after a reconnect, one press of button 1 jumps', `player rose ${fmt(-j3)}px`);
   check(errors.length === 0, 'no page errors with a gamepad', errors.join(' | '));
   await context.close();
 });

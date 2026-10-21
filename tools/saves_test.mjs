@@ -124,13 +124,13 @@ function encodeScores(table) {
   return Array.from(new Uint8Array(buf));
 }
 
-// Writes entries straight into the save storage (IDBFS at /persist):
+// Writes entries straight into the save storage (IDBFS mounted at BB_SAVE_DIR in web/pre.js):
 // name -> byte array, or 'dir' for a directory.
 async function store(page, entries) {
   await page.evaluate(entries => new Promise((resolve, reject) => {
     const FS = Module.FS;
     for (const [name, data] of Object.entries(entries)) {
-      const path = '/persist/' + name;
+      const path = BB_SAVE_DIR + '/' + name;
       try { FS.unlink(path); } catch (e) { /* none */ }
       if (data === 'dir') { FS.mkdir(path); FS.writeFile(path + '/x', 'x'); } else FS.writeFile(path, new Uint8Array(data));
     }
@@ -197,7 +197,7 @@ for (const [name, entries] of Object.entries(cases)) {
     // The next save replaces the bad entries with real files.
     await hidePage(page);
     const kinds = await page.evaluate(() => ['bb.cfg', 'bb.scr'].map(n => {
-      const s = Module.FS.stat('/persist/' + n);
+      const s = Module.FS.stat(BB_SAVE_DIR + '/' + n);
       return Module.FS.isFile(s.mode) ? s.size : 'not a file';
     }));
     check(kinds[0] === 62 && kinds[1] === 244, `${name}: the next save writes proper files`, JSON.stringify(kinds));
@@ -211,7 +211,7 @@ await scenario('database deleted while running', async () => {
   const { context, page, errors } = await newGamePage({ persist: true });
   // Our open connection must not block the deletion.
   const outcome = await page.evaluate(() => new Promise(resolve => {
-    const req = indexedDB.deleteDatabase('/persist');
+    const req = indexedDB.deleteDatabase(BB_SAVE_DIR);
     req.onsuccess = () => resolve('deleted');
     req.onerror = () => resolve('error');
     req.onblocked = () => resolve('blocked');
@@ -226,6 +226,50 @@ await scenario('database deleted while running', async () => {
   await reload(page, errors);
   const cfg = await readConfig(page);
   check(cfg.vsync === 0, 'a change made after the deletion is saved and survives a reload', JSON.stringify(cfg));
+  check(errors.length === 0, 'no page errors', errors.join(' | '));
+  await context.close();
+});
+
+await scenario('malformed database records', async () => {
+  const { context, page, errors } = await newGamePage({ persist: true });
+  // A good save (VSYNC off) next to records IDBFS cannot load: a numeric
+  // timestamp (IDBFS calls timestamp.getTime()) and a file without contents.
+  await toMainMenu(page);
+  await menuKey(page, 'ArrowDown', 'OPTIONS');
+  await menuKey(page, 'Enter', 'the options menu');
+  const n = await saves(page);
+  await menuKey(page, 'ArrowRight', 'VSYNC OFF');
+  await waitSaves(page, n + 1, 'the good save');
+  await page.evaluate(() => new Promise((resolve, reject) => {
+    const req = indexedDB.open(BB_SAVE_DIR);
+    req.onerror = () => reject(req.error);
+    req.onsuccess = () => {
+      const db = req.result;
+      const tx = db.transaction('FILE_DATA', 'readwrite');
+      const store = tx.objectStore('FILE_DATA');
+      store.put({ timestamp: 5, mode: 33206, contents: new Uint8Array(3) }, BB_SAVE_DIR + '/bad-timestamp');
+      store.put({ timestamp: new Date(), mode: 33206 }, BB_SAVE_DIR + '/no-contents');
+      tx.oncomplete = () => { db.close(); resolve(); };
+      tx.onerror = () => reject(tx.error);
+    };
+  }));
+  const warnings = [];
+  page.on('console', m => { if (m.type() === 'warning') warnings.push(m.text()); });
+  await reload(page, errors);
+  check(warnings.some(w => w.startsWith('Repairing saves')), 'the malformed records break loading (repair ran)',
+    warnings.filter(w => w.includes('save')).join(' | '));
+  const mounted = await page.evaluate(() => bbSavesMounted);
+  check(mounted, 'saves still load after malformed records are stored');
+  const cfg = await readConfig(page);
+  check(cfg.vsync === 0, 'the good save survives the repair', JSON.stringify(cfg));
+  await toMainMenu(page);
+  await menuKey(page, 'ArrowDown', 'OPTIONS');
+  await menuKey(page, 'Enter', 'the options menu');
+  const m = await saves(page);
+  await menuKey(page, 'ArrowRight', 'VSYNC ON');
+  await waitSaves(page, m + 1, 'a change after the repair');
+  await reload(page, errors);
+  check((await readConfig(page)).vsync === 1, 'and saving works again after the repair');
   check(errors.length === 0, 'no page errors', errors.join(' | '));
   await context.close();
 });

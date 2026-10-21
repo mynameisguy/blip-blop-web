@@ -48,10 +48,10 @@ python3 tools/compare_frames.py /tmp/native /tmp/web /tmp/diff
 ## Saves and input
 
 The settings (`data/bb.cfg`: keys, options) and hi-scores (`data/bb.scr`)
-persist in the browser's IndexedDB. A browser tab closes without reaching
-the save code at the end of `main()`, so the browser build saves each file as
-soon as it changes (options menu, keys menu, hi-score entry) and again when
-the page is hidden. Add `BB_NO_PERSIST=1` to run with the shipped files only.
+persist in the browser's IndexedDB (database `/blip-n-blop-saves`). A
+browser tab closes without reaching the save code at the end of `main()`, so
+the browser build saves each file as soon as it changes (options menu, keys
+menu, hi-score entry) and again when the page is hidden. Add `BB_NO_PERSIST=1` to run with the shipped files only.
 
 Both tests drive the game with real browser key events, waiting on what the
 game shows rather than on fixed delays (helpers in `tools/game_driver.mjs`):

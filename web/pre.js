@@ -51,7 +51,9 @@ Module.preRun.push(function () {
     });
 });
 
-var BB_SAVE_DIR = '/persist';
+// The mount path is also the IndexedDB database name. It names the game
+// because all of a user's GitHub Pages project sites share one origin.
+var BB_SAVE_DIR = '/blip-n-blop-saves';
 var BB_SAVE_FILES = ['bb.cfg', 'bb.scr'];
 var bbSavesMounted = false;
 var bbSyncing = false;
@@ -59,26 +61,72 @@ var bbSyncAgain = false;
 
 // Resolves true once IndexedDB is mounted and loaded, false if it is not
 // available (private browsing, blocked storage); the game then runs with the
-// shipped defaults and nothing is saved.
+// shipped defaults and nothing is saved. If loading fails on bad records,
+// they are dropped (or, failing that, the database is recreated) so saves
+// do not stay off for this browser profile.
 function bbMountSaves() {
   return new Promise(function (resolve) {
-    try {
-      FS.mkdir(BB_SAVE_DIR);
-      FS.mount(IDBFS, {}, BB_SAVE_DIR);
+    function load(repairs) {
       FS.syncfs(true, function (err) {
-        if (err) {
+        if (!err) {
+          bbSavesMounted = true;
+          bbWatchDb();
+          return resolve(true);
+        }
+        if (!repairs.length) {
           console.warn('Saves unavailable:', err);
           return resolve(false);
         }
-        bbSavesMounted = true;
-        bbWatchDb();
-        resolve(true);
+        console.warn('Repairing saves after:', err);
+        bbCloseDb();
+        repairs[0](function () { load(repairs.slice(1)); });
       });
+    }
+    try {
+      FS.mkdir(BB_SAVE_DIR);
+      FS.mount(IDBFS, {}, BB_SAVE_DIR);
+      load([bbDropBadRecords, bbDeleteDb]);
     } catch (e) {
       console.warn('Saves unavailable:', e);
       resolve(false);
     }
   });
+}
+
+function bbCloseDb() {
+  var db = IDBFS.dbs[BB_SAVE_DIR];
+  delete IDBFS.dbs[BB_SAVE_DIR];
+  try { if (db) db.close(); } catch (e) { /* already closed */ }
+}
+
+// Deletes records IDBFS cannot load: it expects a Date timestamp, a numeric
+// mode and, for a file, byte contents.
+function bbDropBadRecords(done) {
+  var req;
+  try { req = indexedDB.open(BB_SAVE_DIR); } catch (e) { return done(); }
+  req.onerror = req.onblocked = function () { done(); };
+  req.onsuccess = function () {
+    var db = req.result;
+    if (!db.objectStoreNames.contains('FILE_DATA')) { db.close(); return done(); }
+    var tx = db.transaction('FILE_DATA', 'readwrite');
+    tx.objectStore('FILE_DATA').openCursor().onsuccess = function (e) {
+      var c = e.target.result;
+      if (!c) return;
+      var v = c.value;
+      var ok = v && v.timestamp instanceof Date && typeof v.mode === 'number' &&
+        (!FS.isFile(v.mode) || v.contents instanceof Uint8Array);
+      if (!ok) c.delete();
+      c.continue();
+    };
+    tx.oncomplete = tx.onerror = tx.onabort = function () { db.close(); done(); };
+  };
+}
+
+// Last resort: start this profile's saves afresh.
+function bbDeleteDb(done) {
+  var req;
+  try { req = indexedDB.deleteDatabase(BB_SAVE_DIR); } catch (e) { return done(); }
+  req.onsuccess = req.onerror = req.onblocked = function () { done(); };
 }
 
 // Copies saved files over the shipped ones. A file whose size differs from
@@ -184,6 +232,29 @@ addEventListener('pagehide', bbSaveAll);
 document.addEventListener('visibilitychange', function () {
   if (document.visibilityState === 'hidden') bbSaveAll();
 });
+
+// A browser only shows a pad to the page once a button is pressed on it, so
+// the pad arrives with that button already down, and SDL takes the state in
+// the gamepadconnected event as its starting point: the press would never
+// count. Hand SDL (which listens after us) a copy of the pad at rest, with
+// an older timestamp so its next poll compares against the real state and
+// reports the pressed button and pushed stick.
+addEventListener('gamepadconnected', function (e) {
+  var pad = e.gamepad;
+  if (!pad) return;
+  var rest = {
+    id: pad.id,
+    index: pad.index,
+    connected: pad.connected,
+    mapping: pad.mapping,
+    timestamp: (pad.timestamp || 0) - 1,
+    axes: Array.prototype.map.call(pad.axes, function () { return 0; }),
+    buttons: Array.prototype.map.call(pad.buttons, function () {
+      return { pressed: false, touched: false, value: 0 };
+    }),
+  };
+  try { Object.defineProperty(e, 'gamepad', { value: rest }); } catch (err) { /* keep the real one */ }
+}, true);
 
 // Keep the browser from acting on game keys (Space and arrows scrolling,
 // Backspace, Firefox quick find on ' and /, Alt opening the menu bar, Space

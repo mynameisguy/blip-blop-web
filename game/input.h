@@ -225,6 +225,8 @@ private:
 	int		webJoystickSlot(SDL_JoystickID id) const;
 	void	webAddJoystick(int device);
 	bool	webEvent(SDL_Event & e);
+	void	webPollDirections();
+	unsigned char	web_hat[MAX_JOY];	// last hat position of each pad
 #endif
 };
 
