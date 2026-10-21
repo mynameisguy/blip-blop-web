@@ -54,6 +54,9 @@ void KeysMenu::SetKey(int key) {
     state_ = State::Browsing;
     in.setAlias(std::get<2>(dat_[items_.focused()]), key);
     items_.ChangeEntry(items_.focused(), KeyText(items_.focused()));
+#ifdef __EMSCRIPTEN__
+    web_save_config();
+#endif
 }
 
 int KeysMenu::ProcessEvent() {

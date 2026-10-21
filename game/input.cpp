@@ -35,16 +35,13 @@
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
+// waitKey() and waitClean() spin until a key goes down or up. A browser only
+// delivers key events while the page has control, so the spin would freeze the
+// tab: hand control back on every pass (Asyncify resumes the loop after).
+#define WAIT_LOOP_YIELD() emscripten_sleep(5)
+#else
+#define WAIT_LOOP_YIELD()
 #endif
-
-// The wait loops below spin until a key changes. In the browser, key events
-// only arrive when the game yields to the page, so they must yield there.
-static void WaitLoopYield()
-{
-#ifdef __EMSCRIPTEN__
-	emscripten_sleep(10);
-#endif
-}
 
 //-----------------------------------------------------------------------------
 //		Déclaration REELLE de l'objet 'in' global
@@ -80,6 +77,13 @@ bool Input::open(int flags)
 
 	SDL_JoystickEventState(SDL_TRUE);
 
+#ifdef __EMSCRIPTEN__
+	// Pads can also arrive later (see webEvent()); browser pad names are
+	// often longer than js[].name.
+	this->n_joy = 0;
+	for (int i = 0; i < SDL_NumJoysticks(); i++)
+		webAddJoystick(i);
+#else
 	this->n_joy = SDL_NumJoysticks();
 
 	for (int i = 0; i < n_joy; i++)
@@ -90,6 +94,7 @@ bool Input::open(int flags)
 		memset(this->js[i].buttons, 0, sizeof(this->js[i].buttons));
 		memset(&this->js[i].directions, 0, sizeof(this->js[i].directions));
 	}
+#endif
 
 	/*if (dinput != NULL) {
 		debug << "Input::open->DINPUT déjà initialisé!\n";
@@ -192,10 +197,146 @@ bool Input::open(int flags)
 // Desc: Met à jour les entrées
 //-----------------------------------------------------------------------------
 
+#ifdef __EMSCRIPTEN__
+// Slot in js[] of the open joystick with this SDL instance id, or -1.
+int Input::webJoystickSlot(SDL_JoystickID id) const
+{
+	for (int k = 0; k < MAX_JOY; k++)
+		if (js[k].handle != NULL && SDL_JoystickInstanceID(js[k].handle) == id)
+			return k;
+	return -1;
+}
+
+// Opens joystick device 'device' into the first free slot. Slots never move,
+// since key bindings store the slot number.
+void Input::webAddJoystick(int device)
+{
+	SDL_Joystick * j = SDL_JoystickOpen(device);
+	if (j == NULL)
+		return;
+
+	if (webJoystickSlot(SDL_JoystickInstanceID(j)) >= 0) {
+		SDL_JoystickClose(j);		// already open: drop the extra reference
+		return;
+	}
+
+	// web/pre.js prefixes the name of a pad with its Gamepad API index
+	// ("#1 ..."). Use it as the slot, so each physical pad keeps its JOYn
+	// number (and its bindings) whatever order the pads are pressed in.
+	const char * name = SDL_JoystickName(j);
+	int k = -1;
+	if (name && name[0] == '#' && name[1] >= '0' && name[1] <= '9' && name[2] == ' ') {
+		int wanted = name[1] - '0';
+		if (wanted < MAX_JOY && js[wanted].handle == NULL)
+			k = wanted;
+		name += 3;
+	}
+	if (k < 0) {
+		k = 0;
+		while (k < MAX_JOY && js[k].handle != NULL)
+			k++;
+	}
+	if (k == MAX_JOY) {
+		SDL_JoystickClose(j);
+		return;
+	}
+
+	memset(&js[k], 0, sizeof(js[k]));
+	web_hat[k] = 0;
+	js[k].handle = j;
+	strncpy(js[k].name, name ? name : "", sizeof(js[k].name) - 1);
+	if (k >= n_joy)
+		n_joy = k + 1;
+	debug << "Joystick " << (k + 1) << " connected: " << js[k].name << "\n";
+}
+
+// Browser-only event handling before update() sees an event. Returns false
+// when update() must skip the event.
+bool Input::webEvent(SDL_Event & e)
+{
+	int k;
+
+	switch (e.type) {
+		case SDL_WINDOWEVENT:
+			// On focus loss SDL releases held keys through its default US
+			// keymap, so on another layout (e.g. AZERTY) the release names
+			// another key than the press did and the game's key stays down.
+			// SDL then drops the real release too. Forget every key instead.
+			if (e.window.event == SDL_WINDOWEVENT_FOCUS_LOST) {
+				memset(buffer, 0, sizeof(buffer));
+				memset(specialsbuffer, 0, sizeof(specialsbuffer));
+			}
+			return true;
+
+		// A browser only shows a pad to the page once a button is pressed on
+		// it, usually after the game has started, so pads come and go.
+		case SDL_JOYDEVICEADDED:
+			webAddJoystick(e.jdevice.which);
+			return false;
+
+		case SDL_JOYDEVICEREMOVED:
+			k = webJoystickSlot(e.jdevice.which);
+			if (k >= 0) {
+				SDL_JoystickClose(js[k].handle);
+				memset(&js[k], 0, sizeof(js[k]));
+				web_hat[k] = 0;
+				while (n_joy > 0 && js[n_joy - 1].handle == NULL)
+					n_joy--;
+				debug << "Joystick " << (k + 1) << " disconnected\n";
+			}
+			return false;
+
+		// update() indexes js[] with the event's joystick: use its slot.
+		case SDL_JOYBUTTONDOWN:
+		case SDL_JOYBUTTONUP:
+			k = webJoystickSlot(e.jbutton.which);
+			if (k < 0 || e.jbutton.button >= sizeof(js[k].buttons))
+				return false;
+			e.jbutton.which = k;
+			return true;
+
+		// Directions are read from the pad state in webPollDirections().
+		case SDL_JOYHATMOTION:
+			k = webJoystickSlot(e.jhat.which);
+			if (k >= 0)
+				web_hat[k] = e.jhat.value;
+			return false;
+
+		case SDL_JOYAXISMOTION:
+			return false;
+	}
+	return true;
+}
+
+// Sets each pad's directions from its stick (axes 0 and 1, same dead zone
+// as the axis events natively) and its hat. SDL takes the first value it
+// sees on an axis as the rest position and sends no event for it, and the
+// browser reports no starting value, so the first push after a pad connects
+// would be lost if only axis events were used. SDL_JoystickGetAxis has it.
+void Input::webPollDirections()
+{
+	for (int k = 0; k < n_joy; k++) {
+		SDL_Joystick * j = js[k].handle;
+		if (j == NULL)
+			continue;
+		int x = SDL_JoystickNumAxes(j) > 0 ? SDL_JoystickGetAxis(j, 0) : 0;
+		int y = SDL_JoystickNumAxes(j) > 1 ? SDL_JoystickGetAxis(j, 1) : 0;
+		js[k].directions.left = x < -DEAD_ZONE || (web_hat[k] & SDL_HAT_LEFT);
+		js[k].directions.right = x > DEAD_ZONE || (web_hat[k] & SDL_HAT_RIGHT);
+		js[k].directions.up = y < -DEAD_ZONE || (web_hat[k] & SDL_HAT_UP);
+		js[k].directions.down = y > DEAD_ZONE || (web_hat[k] & SDL_HAT_DOWN);
+	}
+}
+#endif
+
 void Input::update()
 {
 	SDL_Event e;
 	while (SDL_PollEvent(&e)){
+#ifdef __EMSCRIPTEN__
+		if (!webEvent(e))
+			continue;
+#endif
 
 		if (e.type == SDL_QUIT)
 		{
@@ -303,6 +444,9 @@ void Input::update()
 		}
 
 	}
+#ifdef __EMSCRIPTEN__
+	webPollDirections();
+#endif
 	/*if (dikeyb != NULL)
 		dikeyb->GetDeviceState(sizeof(buffer), (void *)&buffer);
 
@@ -325,7 +469,6 @@ unsigned int Input::waitKey()
 
 	while (1)
 	{
-		WaitLoopYield();
 		update();
 		for (int i = 0; i < 255; i++)
 		{
@@ -379,6 +522,7 @@ unsigned int Input::waitKey()
 			}
 			//return (js[k].buttons[i] | (0x400));
 		}
+		WAIT_LOOP_YIELD();
 	}
 	/*unsigned int	i = 0;
 	int				j;
@@ -414,7 +558,6 @@ void Input::waitClean()
 	while (1)
 	{
 		bool j = false;
-		WaitLoopYield();
 		update();
 		for (int i = 0; i < 255; i++)
 		{
@@ -450,6 +593,7 @@ void Input::waitClean()
 
 		if (!j)
 			return;
+		WAIT_LOOP_YIELD();
 	}
 	/*unsigned int		i, j = 1;		// Bcoz si j = 0 alors on sort tout de suite!
 
@@ -607,7 +751,9 @@ int Input::scanKey(unsigned int k) const
 
 		return z;
 	}*/
-	if ((k >> 10) & 0xFF > 0)
+	// Was "(k >> 10) & 0xFF > 0", which C++ reads as "(k >> 10) & 1": the
+	// codes of joysticks 2 and 4 then fell through to the keyboard below.
+	if (((k >> 10) & 0xFF) > 0)
 	{
 		/*
 		REMEMBER
@@ -615,6 +761,11 @@ int Input::scanKey(unsigned int k) const
 		*/
 		int	j = k >> 10 & 0xFF;
 		int b = k & 0xFF;
+
+		// Now that every joystick number gets here, keep a binding read
+		// from a damaged config inside js[].
+		if (j > MAX_JOY || b >= (int)sizeof(js[0].buttons))
+			return 0;
 
 		if (b == JOY_UP)
 			return js[j - 1].directions.up;

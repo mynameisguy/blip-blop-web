@@ -21,6 +21,6 @@ class KeysMenu : public AbstractMenu {
 
     std::array<std::tuple<int, int, int>, 7> dat_;
     MenuList items_;
-    State state_;
+    State state_ = State::Browsing;
     int player_;
 };

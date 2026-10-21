@@ -59,6 +59,12 @@ void load_BB3_config(const char * cfg_file)
 		fread(&vSyncOn, sizeof(vSyncOn), 1, fic);
 		fread(&fullscreen, sizeof(fullscreen), 1, fic);
 		fread(&lang_type, sizeof(lang_type), 1, fic);
+#ifdef __EMSCRIPTEN__
+		// A damaged save can hold any byte in these bools (a 2 made VSYNC
+		// impossible to turn off): read them as bytes, keep 0 or 1.
+		vSyncOn = *(unsigned char *)&vSyncOn != 0;
+		fullscreen = *(unsigned char *)&fullscreen != 0;
+#endif
 
 		fread(&a, sizeof(a), 1, fic);
 		in.setAlias(ALIAS_P1_UP, a);
@@ -194,3 +200,48 @@ void set_default_config(bool reset_lang)
 	in.setAlias(ALIAS_P2_JUMP, DIK_G);
 	in.setAlias(ALIAS_P2_SUPER, DIK_H);
 }
+
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+
+// The same files main() loads at start and saves at exit.
+static const char WEB_CONFIG_FILE[] = "data/bb.cfg";
+static const char WEB_HISCORES_FILE[] = "data/bb.scr";
+
+// Set once main() has loaded both files, so a save from the page never
+// writes uninitialised settings over them.
+static bool web_saves_loaded = false;
+
+static void web_persist(const char * file)
+{
+	EM_ASM({ if (Module.bbPersistSave) Module.bbPersistSave(UTF8ToString($0)); }, file);
+}
+
+void web_save_config()
+{
+	save_BB3_config(WEB_CONFIG_FILE);
+	web_persist(WEB_CONFIG_FILE);
+}
+
+void web_save_hi_scores()
+{
+	if (!hi_scores.save(WEB_HISCORES_FILE))
+		debug << "Cannot save hi-scores\n";
+	web_persist(WEB_HISCORES_FILE);
+}
+
+void web_saves_ready()
+{
+	web_saves_loaded = true;
+}
+
+// The page calls this when it is hidden or closed: the browser counterpart
+// of the saves at the end of main().
+extern "C" EMSCRIPTEN_KEEPALIVE void bb_web_save_all()
+{
+	if (!web_saves_loaded)
+		return;
+	web_save_hi_scores();
+	web_save_config();
+}
+#endif

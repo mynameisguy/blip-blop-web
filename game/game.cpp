@@ -2528,6 +2528,9 @@ void Game::getName(Joueur* joueur, int ijoueur) {
     }
 
     hi_scores.add(joueur->getScore(), name);
+#ifdef __EMSCRIPTEN__
+    web_save_hi_scores();
+#endif
 }
 
 //-----------------------------------------------------------------------------
