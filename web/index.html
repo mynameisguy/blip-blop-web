@@ -125,7 +125,14 @@
     box-sizing: border-box; padding: 0;
   }
   .tbtn.on { background: rgba(255, 204, 51, .45); border-color: var(--accent); }
-  .tbtn.pill { border-radius: 15px; font-size: 12px; height: 30px; }
+  #t-special { font-size: 11px; }
+  .tbtn.pill { border-radius: 22px; font-size: 13px; height: 44px; }
+  /* Between Fire and Jump: one thumb here presses both. */
+  #t-both {
+    border-radius: 50%; background: rgba(255, 255, 255, .06);
+    border: 1px dashed rgba(255, 255, 255, .25); box-sizing: border-box;
+  }
+  #t-both.on { background: rgba(255, 204, 51, .3); }
   /* No room beside the picture (e.g. a tablet): the controls sit over it,
      fainter. */
   #touch.overlap > * { opacity: .45; }
@@ -149,6 +156,7 @@
     <div class="tbtn" id="t-special" data-act="special">Special</div>
     <div class="tbtn" id="t-jump" data-act="jump">Jump</div>
     <div class="tbtn" id="t-fire" data-act="fire">Fire</div>
+    <div id="t-both" data-act="fire jump" aria-label="Fire and Jump"></div>
   </div>
   <div id="rotate" hidden>Turn the phone sideways for a bigger picture</div>
 
@@ -333,35 +341,56 @@
     if (h !== undefined) el.style.height = Math.round(h) + 'px';
   }
   function layoutTouch(pic, portrait) {
-    var W = stage.clientWidth, H = stage.clientHeight, ins = insets(), g = 8, pillH = 30;
+    var W = stage.clientWidth, H = stage.clientHeight, ins = insets(), g = 8, pillH = 44;
     var pad = document.getElementById('dpad'), fire = document.getElementById('t-fire'),
         jump = document.getElementById('t-jump'), special = document.getElementById('t-special'),
         menu = document.getElementById('t-menu'), start = document.getElementById('t-start'),
-        fs = document.getElementById('t-fs');
+        fs = document.getElementById('t-fs'), both = document.getElementById('t-both');
     var hasFs = !fsBtn.hidden;
     fs.style.display = hasFs ? '' : 'none';
     var L = ins.left + g, R = W - ins.right - g, T = ins.top + g, B = H - ins.bottom - g;
 
-    // Buttons as a cluster in a box (x0..x1, y0..y1), bottom-aligned: two
-    // columns (Fire low right, Jump low left, Special above Fire) when wide
-    // enough, else one column. Returns the button size used.
+    // Buttons as a cluster in a box (x0..x1, y0..y1), bottom-aligned, Jump
+    // low on the left and Fire to its upper right, Special above Fire: side
+    // by side when the box is wide enough, else diagonally (one thumb can
+    // still rock between them, and the spot between them presses both).
+    // Only when neither fits buttons of 48 px, one column. Returns the
+    // button size used.
     function buttons(x0, x1, y0, y1) {
       var cw = x1 - x0, ch = y1 - y0, b;
       var pairB = Math.min(76, (cw - g) / 2, (ch - g) / 2);
-      var colB = Math.min(72, cw, (ch - 2 * g) / 3);
-      // Whichever arrangement gives the bigger buttons.
-      if (pairB >= 52 && pairB >= colB) {
+      if (pairB >= 52) {
         b = pairB;
         place(fire, x1 - b, y1 - b - b * 0.35, b, b);
         place(jump, x1 - 2 * b - g, y1 - b, b, b);
         place(special, x1 - b * 0.85, y1 - 2 * b - g - b * 0.35, b * 0.85, b * 0.85);
-        return b;
+        return linkBoth(b);
       }
-      b = colB;
+      // Diagonal: centres b + g apart, at most 60 degrees from level (so
+      // a thumb rocks across rather than up), with the biggest buttons
+      // that allows.
+      for (b = Math.min(76, cw); b >= 48; b--) {
+        var dx = cw - b, dy = Math.sqrt(Math.max(0, (b + g) * (b + g) - dx * dx));
+        if (dx >= (b + g) / 2 && b + dy + g + b * 0.85 <= ch) {
+          place(jump, x0, y1 - b, b, b);
+          place(fire, x1 - b, y1 - b - dy, b, b);
+          place(special, x1 - b * 0.85, y1 - b - dy - g - b * 0.85, b * 0.85, b * 0.85);
+          return linkBoth(b);
+        }
+      }
+      b = Math.min(72, cw, (ch - 2 * g) / 3);
       var cx = x0 + (cw - b) / 2;
       place(fire, cx, y1 - b, b, b);
       place(jump, cx, y1 - 2 * b - g, b, b);
       place(special, cx, y1 - 3 * b - 2 * g, b, b);
+      return linkBoth(b);
+    }
+    // The "both" spot sits on the midpoint between Fire and Jump.
+    function linkBoth(b) {
+      var f = [parseFloat(fire.style.left), parseFloat(fire.style.top)],
+          j = [parseFloat(jump.style.left), parseFloat(jump.style.top)];
+      var d = Math.max(28, Math.round(b * 0.45));
+      place(both, (f[0] + j[0] + b - d) / 2, (f[1] + j[1] + b - d) / 2, d, d);
       return b;
     }
 
@@ -408,6 +437,7 @@
         place(fire, R - bb, B - bb - bb * 0.35, bb, bb);
         place(jump, R - 2 * bb - g, B - bb, bb, bb);
         place(special, R - bb * 0.85, B - 2 * bb - g - bb * 0.35, bb * 0.85, bb * 0.85);
+        linkBoth(bb);
       }
     }
     touchUi.classList.toggle('overlap', !fits);
@@ -650,7 +680,7 @@
   function buttonActs(x, y) {
     var el = document.elementFromPoint(x, y);
     el = el && el.closest && el.closest('#touch [data-act]');
-    return el ? [el.dataset.act] : [];
+    return el ? el.dataset.act.split(' ') : [];
   }
   function setActs(p, acts) {
     var codes = keyCodes();
@@ -669,7 +699,7 @@
       dpad.querySelector('.' + a[0]).classList.toggle('on', !!on[a]);
     });
     Array.prototype.forEach.call(touchUi.querySelectorAll('[data-act]'), function (el) {
-      el.classList.toggle('on', !!on[el.dataset.act]);
+      el.classList.toggle('on', el.dataset.act.split(' ').every(function (a) { return on[a]; }));
     });
   }
   function track(e) {

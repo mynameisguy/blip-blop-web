@@ -8,6 +8,9 @@
 //   - only when even the smallest controls do not fit (a tablet in
 //     landscape) may they cover the picture, and then they are faint;
 //   - every control is fully on screen;
+//   - Fire and Jump are side by side or diagonal (not one column), and one
+//     touch between them presses both;
+//   - the Menu/Start/Fullscreen pills are at least 44 px tall;
 //   - the pad sends ONE key per direction: the player 1 key (so player 2,
 //     bound to the arrows here, does not move too).
 //
@@ -74,7 +77,7 @@ for (const [w, h, dpr, mayOverlap] of DEVICES) {
   await page.waitForTimeout(800);
   const m = await page.evaluate(() => {
     const r = el => { const b = el.getBoundingClientRect(); return [b.left, b.top, b.right, b.bottom]; };
-    const parts = ['#dpad', '#t-fire', '#t-jump', '#t-special', '#t-menu', '#t-start', '#t-fs', '#rotate']
+    const parts = ['#dpad', '#t-fire', '#t-jump', '#t-special', '#t-both', '#t-menu', '#t-start', '#t-fs', '#rotate']
       .map(s => document.querySelector(s))
       .filter(el => el && !el.hidden && getComputedStyle(el).display !== 'none')
       .map(el => [el.id, r(el)]);
@@ -119,6 +122,28 @@ for (const [w, h, dpr, mayOverlap] of DEVICES) {
     }
   } else {
     check(m.picId === 'canvas', `${label}: landscape keeps the integer-scaled game canvas`, `shown on #${m.picId}`);
+  }
+  const box = id => (m.parts.find(q => q[0] === id) || [0, [0, 0, 0, 0]])[1];
+  const pills = ['t-menu', 't-start', 't-fs'].filter(id => m.parts.some(q => q[0] === id))
+    .map(id => box(id)[3] - box(id)[1]);
+  check(pills.length >= 2 && Math.min(...pills) >= 44, `${label}: pills at least 44 px tall`, pills.map(Math.round).join(' '));
+  const fb = box('t-fire'), jb = box('t-jump');
+  const fc = [(fb[0] + fb[2]) / 2, (fb[1] + fb[3]) / 2], jc = [(jb[0] + jb[2]) / 2, (jb[1] + jb[3]) / 2];
+  // Fire right of Jump, at most 60 degrees from level.
+  const dist = Math.hypot(fc[0] - jc[0], fc[1] - jc[1]);
+  check(fc[0] - jc[0] >= 0.5 * dist - 1, `${label}: Fire and Jump side by side or diagonal, not one column`,
+        `Fire centre ${fc.map(Math.round)}, Jump centre ${jc.map(Math.round)}`);
+  {
+    // One touch between them presses both.
+    const cdp = await ctx.newCDPSession(page);
+    const mid = { x: (fc[0] + jc[0]) / 2, y: (fc[1] + jc[1]) / 2, id: 7 };
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [mid] });
+    const held = await page.evaluate(() => Object.keys(window.__down).sort());
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    const after = await page.evaluate(() => Object.keys(window.__down).length);
+    check(held.join() === 'KeyX,Space' && after === 0,
+          `${label}: one touch between Fire and Jump presses both, and releases both`,
+          `held ${held.join() || 'none'}, still held after release ${after}`);
   }
   if (out) await page.screenshot({ path: `${out}/layout-${w}x${h}.png` });
 

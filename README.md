@@ -51,7 +51,9 @@ On touch devices the page shows on-screen controls (pad, Fire, Jump,
 Special, Menu, Start), sized to fit the margins beside the picture (held
 sideways) or the space below it (held upright, with the picture at the top).
 They send the player 1 keys the game is set to (read from the game; the menus
-read those too), with the arrows as a fallback, and Return/Escape.
+read those too), with the arrows as a fallback, and Return/Escape. Fire and
+Jump sit side by side, or diagonally in a narrow margin, and a touch on the
+spot between them presses both.
 
 `web/build.sh` names `blipblop.js`, the `.wasm` and the data manifest by
 content hash, so after a deploy a browser never mixes cached old and new files.
