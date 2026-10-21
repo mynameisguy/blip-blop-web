@@ -78,15 +78,21 @@ check(level.loud > 0, 'game audio is not silent', JSON.stringify(level));
 const focus = await page.evaluate(() => document.activeElement && document.activeElement.id);
 check(focus === 'canvas', 'canvas has focus', `active element: ${focus}`);
 
-for (const k of ['ArrowDown', 'ArrowUp', 'Space', 'PageDown']) await page.keyboard.press(k);
+for (const k of ['ArrowDown', 'ArrowUp', 'Space', 'PageDown', 'Slash', 'Quote']) await page.keyboard.press(k);
 await page.keyboard.press('F11');
 await page.waitForTimeout(200);
 const keys = await page.evaluate(() => ({ keys: window.__keys, scroll: [scrollX, scrollY] }));
 const prevented = Object.fromEntries(keys.keys.map(k => [k.key, k.prevented]));
-check([' ', 'ArrowDown', 'ArrowUp', 'PageDown'].every(k => prevented[k]), 'game keys do not reach the page',
+check([' ', 'ArrowDown', 'ArrowUp', 'PageDown', '/', "'"].every(k => prevented[k]), 'game keys (and / and \' for quick find) do not reach the page',
       JSON.stringify(prevented));
 check(prevented.F11 === false, 'F11 is left to the browser');
 check(keys.scroll[0] === 0 && keys.scroll[1] === 0, 'page did not scroll');
+
+// A click anywhere on the page gives the keyboard back to the game.
+await page.evaluate(() => document.activeElement.blur());
+await page.mouse.click(20, 700);
+const refocused = await page.evaluate(() => document.activeElement && document.activeElement.id);
+check(refocused === 'canvas', 'a click on the page refocuses the canvas', `active element: ${refocused}`);
 
 const errors = log.filter(l => /^(error|pageerror)/.test(l));
 check(errors.length === 0, 'no console errors', errors.slice(0, 5).join(' | '));
@@ -102,6 +108,20 @@ await page.waitForSelector('#start.ready', { timeout: 600000 });
 const status = await page.$eval('#status', e => e.textContent);
 console.log(`reload: data ready in ${((Date.now() - t1) / 1000).toFixed(1)} s`);
 check(dataRequests === 0, 'second visit reads the data from the cache', `${dataRequests} data requests`);
+
+// A missing WebAssembly file gives a friendly message, and "Ready." is
+// never shown without it.
+const ctx2 = await browser.newContext();
+const page2 = await ctx2.newPage();
+await page2.route(/blipblop\.wasm/, r => r.fulfill({ status: 404, body: 'missing' }));
+const seen = [];
+const poll2 = setInterval(async () => { try { seen.push(await page2.$eval('#status', e => e.textContent)); } catch {} }, 100);
+await page2.goto(url);
+await page2.waitForSelector('#status.error', { timeout: 120000 }).catch(() => {});
+clearInterval(poll2);
+const msg = await page2.$eval('#status', e => e.textContent);
+check(/could not start/.test(msg) && !seen.includes('Ready.'), 'missing blipblop.wasm gives a friendly error', msg);
+await ctx2.close();
 
 await Promise.race([browser.close(), new Promise(r => setTimeout(r, 5000))]);
 console.log(failures ? `${failures} check(s) failed` : 'all checks passed');

@@ -36,4 +36,22 @@ extern "C" EMSCRIPTEN_KEEPALIVE const char* bb_key_bindings() {
     return out.c_str();
 }
 
+// The raw SDL keycodes of the same bindings, in the same order, separated by
+// commas. The page's touch controls send these keys.
+extern "C" EMSCRIPTEN_KEEPALIVE const char* bb_key_codes() {
+    static const int aliases[] = {
+        ALIAS_P1_UP,   ALIAS_P1_DOWN,  ALIAS_P1_LEFT,  ALIAS_P1_RIGHT,
+        ALIAS_P1_FIRE, ALIAS_P1_JUMP,  ALIAS_P1_SUPER, ALIAS_P2_UP,
+        ALIAS_P2_DOWN, ALIAS_P2_LEFT,  ALIAS_P2_RIGHT, ALIAS_P2_FIRE,
+        ALIAS_P2_JUMP, ALIAS_P2_SUPER,
+    };
+    static std::string out;
+    out.clear();
+    for (int a : aliases) {
+        if (!out.empty()) out += ',';
+        out += std::to_string(in.getAlias(a));
+    }
+    return out.c_str();
+}
+
 #endif

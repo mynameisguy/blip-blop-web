@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Blip &amp; Blop</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%23000'/%3E%3Ccircle cx='8' cy='8' r='5' fill='%23ffcc33'/%3E%3C/svg%3E">
 <style>
@@ -20,15 +20,18 @@
     font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
   }
   #stage { position: fixed; inset: 0; background: #000; overflow: hidden; }
-  /* The canvas keeps its 640x480 drawing buffer. layout() sets its CSS size to
-     an integer multiple of 640x480 device pixels, so with nearest-neighbour
-     scaling every game pixel becomes an exact NxN block. */
+  /* The canvas keeps its 640x480 drawing buffer. layout() sizes it to a whole
+     multiple of 640x480 device pixels, so with nearest-neighbour scaling every
+     game pixel becomes an exact NxN block. */
   #canvas {
     position: absolute; left: 0; top: 0; width: 640px; height: 480px;
     transform-origin: 0 0;
     image-rendering: pixelated; image-rendering: crisp-edges;
     outline: none; display: block;
   }
+  /* Below 1x (a window narrower than 640 device pixels) nearest-neighbour
+     would drop whole rows and columns, so smooth filtering is used instead. */
+  #canvas.smooth { image-rendering: auto; }
   #stage.idle, #stage.idle #canvas { cursor: none; }
 
   button {
@@ -40,18 +43,19 @@
 
   #toolbar {
     position: absolute; top: 8px; right: 8px; display: flex; gap: 6px;
-    transition: opacity .3s; z-index: 3;
+    transition: opacity .3s; z-index: 4;
   }
   #stage.idle #toolbar { opacity: 0; pointer-events: none; }
 
   #overlay, #help {
     position: absolute; inset: 0; display: flex;
-    align-items: center; justify-content: center; z-index: 2;
+    align-items: center; justify-content: center; z-index: 3;
   }
   #overlay { background: #000; cursor: pointer; }
-  #overlay[hidden], #help[hidden] { display: none; }
+  #overlay[hidden], #help[hidden], #touch[hidden], #rotate[hidden] { display: none; }
   .card {
     width: min(420px, calc(100vw - 32px)); box-sizing: border-box;
+    max-height: calc(100% - 24px); overflow: auto;
     padding: 20px 22px; background: var(--panel);
     border: 1px solid var(--line); border-radius: 10px;
   }
@@ -75,17 +79,76 @@
     background: #222; border: 1px solid #444; border-bottom-width: 2px;
     border-radius: 4px; padding: 0 4px;
   }
+  .touch-only { display: none; }
+  body.touch .touch-only { display: block; }
+  body.touch .no-touch { display: none; }
   #help { background: rgba(0, 0, 0, .55); }
   #help table { width: 100%; border-collapse: collapse; margin: 6px 0 0; font-size: 13px; }
   #help th { text-align: left; color: var(--dim); font-weight: normal; padding: 2px 6px 2px 0; }
   #help td { padding: 2px 6px 2px 0; }
   #help .close { float: right; }
   #help td.note { padding-top: 8px; color: var(--dim); }
+
+  /* Touch controls: semi-transparent, in the margins beside the picture on a
+     phone held sideways. */
+  #touch {
+    position: absolute; inset: 0; z-index: 2; pointer-events: none;
+    -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+  }
+  #touch > * { pointer-events: auto; touch-action: none; position: absolute; }
+  #dpad {
+    --size: min(150px, 40vh, 40vw);
+    left: calc(14px + env(safe-area-inset-left)); bottom: calc(14px + env(safe-area-inset-bottom));
+    width: var(--size); height: var(--size); border-radius: 50%;
+    background: rgba(255, 255, 255, .07); border: 1px solid rgba(255, 255, 255, .2);
+  }
+  #dpad span {
+    position: absolute; width: 0; height: 0; border: 13px solid transparent; opacity: .55;
+  }
+  #dpad span.on { opacity: 1; }
+  #dpad .u { left: calc(50% - 13px); top: 8%; border-bottom: 18px solid #fff; border-top-width: 0; }
+  #dpad .d { left: calc(50% - 13px); bottom: 8%; border-top: 18px solid #fff; border-bottom-width: 0; }
+  #dpad .l { top: calc(50% - 13px); left: 8%; border-right: 18px solid #fff; border-left-width: 0; }
+  #dpad .r { top: calc(50% - 13px); right: 8%; border-left: 18px solid #fff; border-right-width: 0; }
+  .tbtn {
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 50%; color: rgba(255, 255, 255, .85); font-size: 13px; font-weight: 600;
+    background: rgba(255, 255, 255, .1); border: 1px solid rgba(255, 255, 255, .28);
+    box-sizing: border-box;
+  }
+  .tbtn.on { background: rgba(255, 204, 51, .45); border-color: var(--accent); }
+  #t-fire { --s: min(74px, 19vh); width: var(--s); height: var(--s);
+            right: calc(14px + env(safe-area-inset-right)); bottom: calc(40px + env(safe-area-inset-bottom)); }
+  #t-jump { --s: min(64px, 16vh); width: var(--s); height: var(--s);
+            right: calc(14px + min(84px, 21vh) + env(safe-area-inset-right)); bottom: calc(14px + env(safe-area-inset-bottom)); }
+  #t-special { --s: min(56px, 14vh); width: var(--s); height: var(--s);
+               right: calc(30px + env(safe-area-inset-right)); bottom: calc(52px + min(84px, 21vh) + env(safe-area-inset-bottom)); }
+  #t-menu, #t-start {
+    top: calc(10px + env(safe-area-inset-top)); height: 30px; padding: 0 12px;
+    border-radius: 15px; font-size: 12px; font-weight: 600;
+  }
+  #t-menu { left: calc(12px + env(safe-area-inset-left)); }
+  #t-start { left: calc(84px + env(safe-area-inset-left)); }
+  #rotate {
+    position: absolute; left: 50%; top: calc(54px + env(safe-area-inset-top)); transform: translateX(-50%);
+    z-index: 2; padding: 6px 12px; border-radius: 16px; white-space: nowrap;
+    background: var(--panel); border: 1px solid var(--line); color: var(--dim); font-size: 13px;
+  }
 </style>
 </head>
 <body>
 <div id="stage">
   <canvas id="canvas" width="640" height="480" tabindex="0" oncontextmenu="event.preventDefault()"></canvas>
+
+  <div id="touch" hidden>
+    <div id="dpad" data-dpad><span class="u"></span><span class="d"></span><span class="l"></span><span class="r"></span></div>
+    <div class="tbtn" id="t-menu" data-act="menu">Menu</div>
+    <div class="tbtn" id="t-start" data-act="start">Start</div>
+    <div class="tbtn" id="t-special" data-act="special">Special</div>
+    <div class="tbtn" id="t-jump" data-act="jump">Jump</div>
+    <div class="tbtn" id="t-fire" data-act="fire">Fire</div>
+  </div>
+  <div id="rotate" hidden>Turn your phone sideways for a bigger picture</div>
 
   <div id="toolbar">
     <button id="help-btn" type="button" tabindex="-1" title="Controls">Controls</button>
@@ -99,12 +162,16 @@
       <div id="bar"><div></div></div>
       <p id="status" role="status">Loading…</p>
       <button id="retry" type="button" hidden>Reload</button>
-      <p id="start" hidden>Click or press any key to play</p>
-      <div class="keys">
+      <p id="start" hidden></p>
+      <div class="keys no-touch">
         <p><kbd>↑</kbd> <kbd>↓</kbd> and <kbd>Return</kbd> move through the menus.</p>
         <p><kbd>Esc</kbd> goes back, and opens the game menu while playing.</p>
         <p>Player keys are set in Options › Keys.
            <kbd>Alt</kbd>+<kbd>Return</kbd> toggles fullscreen.</p>
+      </div>
+      <div class="keys touch-only">
+        <p>On-screen controls: the pad moves (and picks menu items), Start
+           confirms, Menu goes back or opens the game menu.</p>
       </div>
     </div>
   </div>
@@ -134,8 +201,14 @@
   var startEl = document.getElementById('start');
   var retryBtn = document.getElementById('retry');
   var help = document.getElementById('help');
+  var touchUi = document.getElementById('touch');
+  var rotateHint = document.getElementById('rotate');
 
-  // ---- Integer scaling --------------------------------------------------
+  var gestured, failed = false, running = false, dataReady = false, wasmReady = false;
+  var touchMode = false;
+  try { touchMode = matchMedia('(pointer: coarse)').matches; } catch (err) {}
+
+  // ---- Scaling ----------------------------------------------------------
   // Stage size in device pixels, exact when the browser reports it.
   var stageDevice = null;
 
@@ -164,17 +237,31 @@
       dw = stageDevice[0];
       dh = stageDevice[1];
     }
-    var n = Math.max(1, Math.floor(Math.min(dw / 640, dh / 480)));
-    var left = snap((dw - 640 * n) / 2, dpr);
-    var top = snap((dh - 480 * n) / 2, dpr);
+    var n = Math.floor(Math.min(dw / 640, dh / 480));
+    var w, h;
+    if (n >= 1) {
+      // The largest whole factor that fits: exact NxN blocks.
+      w = 640 * n;
+      h = 480 * n;
+      canvas.classList.remove('smooth');
+    } else {
+      // The window cannot show 640x480 even at 1x: scale down to fit (whole
+      // device pixels, 4:3 kept) rather than crop, with smooth filtering.
+      w = Math.max(1, Math.min(dw, Math.floor(dh * 4 / 3)));
+      h = Math.max(1, Math.round(w * 3 / 4));
+      canvas.classList.add('smooth');
+    }
+    var left = snap((dw - w) / 2, dpr);
+    var top = snap((dh - h) / 2, dpr);
     // The size is set in device pixels and scaled down by the ratio with a
     // transform: a CSS width such as 640 * 2 / 1.1 px cannot be stored
     // exactly, a transform can.
-    canvas.style.width = (640 * n) + 'px';
-    canvas.style.height = (480 * n) + 'px';
+    canvas.style.width = w + 'px';
+    canvas.style.height = h + 'px';
     canvas.style.transform = 'translate(' + Math.round(left / dpr) + 'px,' +
       Math.round(top / dpr) + 'px) scale(' + (1 / dpr) + ')';
-    canvas.dataset.scale = n;
+    canvas.dataset.scale = n >= 1 ? n : (w / 640).toFixed(3);
+    updateTouchUi();
   }
 
   if (typeof ResizeObserver !== 'undefined') {
@@ -189,7 +276,6 @@
   }
   window.addEventListener('resize', layout);
   document.addEventListener('fullscreenchange', layout);
-  layout();
 
   // ---- Fullscreen -------------------------------------------------------
   function isFullscreen() {
@@ -220,11 +306,23 @@
   });
   fsBtn.addEventListener('click', toggleFullscreen);
 
+  // ---- Key bindings (read from the game) -------------------------------------
+  // Player 1 then player 2: up, down, left, right, fire, jump, special.
+  var ALIASES = ['UP', 'DOWN', 'LEFT', 'RIGHT', 'FIRE', 'JUMP', 'SUPER'];
+  function keyCodes() {
+    try {
+      if (running && Module._bb_key_codes)
+        return Module.UTF8ToString(Module._bb_key_codes()).split(',').map(Number);
+    } catch (err) {}
+    return null;
+  }
+
   // ---- Controls panel -------------------------------------------------------
   var LABELS = { UP: 'Up', DOWN: 'Down', LEFT: 'Left', RIGHT: 'Right',
                  FIRE: 'Fire', JUMP: 'Jump', SUPER: 'Special' };
   function showHelp(show) {
     help.hidden = !show;
+    updateTouchUi();
     if (show) {
       var table = document.getElementById('bindings');
       table.textContent = '';
@@ -250,7 +348,7 @@
         unset = true;
         return 'not set';
       }
-      Object.keys(LABELS).forEach(function (k) {
+      ALIASES.forEach(function (k) {
         var row = table.insertRow();
         row.insertCell().textContent = LABELS[k];
         row.insertCell().textContent = name(keys['P1_' + k]);
@@ -286,13 +384,14 @@
       showHelp(false);
     }
   }, true);
-  // Keys the game uses must not scroll the page or move focus.
+  // Keys the game uses must not scroll the page or move focus, and while it
+  // runs '/' and "'" must not open the browser's quick find.
   var GAME_KEYS = { ' ': 1, ArrowUp: 1, ArrowDown: 1, ArrowLeft: 1, ArrowRight: 1,
                     PageUp: 1, PageDown: 1, Home: 1, End: 1, Tab: 1, Alt: 1, Backspace: 1 };
   ['keydown', 'keyup'].forEach(function (type) {
     window.addEventListener(type, function (e) {
-      if (GAME_KEYS[e.key] && !(e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)))
-        e.preventDefault();
+      if (e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+      if (GAME_KEYS[e.key] || (running && (e.key === '/' || e.key === "'"))) e.preventDefault();
     });
   });
 
@@ -306,8 +405,168 @@
     }, 2500);
   }
   stage.addEventListener('mousemove', wake);
-  stage.addEventListener('mousedown', wake);
-  canvas.addEventListener('mousedown', function () { canvas.focus(); });
+  // Any click or touch on the page gives the keyboard back to the game.
+  // (A mousedown would move focus to the clicked element after this runs, so
+  // that default is cancelled outside buttons and panels.)
+  stage.addEventListener('mousedown', function (e) {
+    wake();
+    if (!(e.target.closest && e.target.closest('button, .card'))) e.preventDefault();
+    canvas.focus({ preventScroll: true });
+  });
+  stage.addEventListener('touchstart', function () { canvas.focus({ preventScroll: true }); },
+                         { passive: true });
+
+  // ---- Touch controls ---------------------------------------------------------
+  // The buttons send the same KeyboardEvents a keyboard would. SDL listens on
+  // window and reads `code` (for the scancode) and `keyCode` (for the
+  // keycode the game sees), so both are set.
+  function domKey(sdl) {
+    if (sdl >= 97 && sdl <= 122) {
+      var c = String.fromCharCode(sdl);
+      return { key: c, code: 'Key' + c.toUpperCase(), keyCode: sdl - 32, location: 0 };
+    }
+    if (sdl >= 48 && sdl <= 57) {
+      var d = String.fromCharCode(sdl);
+      return { key: d, code: 'Digit' + d, keyCode: sdl, location: 0 };
+    }
+    var t = {
+      8: ['Backspace', 'Backspace', 8], 9: ['Tab', 'Tab', 9], 13: ['Enter', 'Enter', 13],
+      27: ['Escape', 'Escape', 27], 32: [' ', 'Space', 32],
+      0x4000004F: ['ArrowRight', 'ArrowRight', 39], 0x40000050: ['ArrowLeft', 'ArrowLeft', 37],
+      0x40000051: ['ArrowDown', 'ArrowDown', 40], 0x40000052: ['ArrowUp', 'ArrowUp', 38],
+      0x400000E0: ['Control', 'ControlLeft', 17, 1], 0x400000E1: ['Shift', 'ShiftLeft', 16, 1],
+      0x400000E2: ['Alt', 'AltLeft', 18, 1], 0x400000E4: ['Control', 'ControlRight', 17, 2],
+      0x400000E5: ['Shift', 'ShiftRight', 16, 2], 0x400000E6: ['Alt', 'AltRight', 18, 2],
+    }[sdl];
+    return t ? { key: t[0], code: t[1], keyCode: t[2], location: t[3] || 0 } : null;
+  }
+  var ARROWS = { up: 0x40000052, down: 0x40000051, left: 0x40000050, right: 0x4000004F };
+  var P1 = { up: 0, down: 1, left: 2, right: 3, fire: 4, jump: 5, special: 6 };
+
+  // The keys for one on-screen action: the arrow (for menus) and the player 1
+  // binding for directions, the player 1 binding for buttons.
+  function actionKeys(act, codes) {
+    var sdl = [];
+    if (act === 'menu') sdl = [27];
+    else if (act === 'start') sdl = [13];
+    else {
+      if (ARROWS[act]) sdl.push(ARROWS[act]);
+      if (codes && act in P1) sdl.push(codes[P1[act]]);
+    }
+    var out = [], seen = {};
+    sdl.forEach(function (s) {
+      var k = domKey(s);
+      if (k && !seen[k.code]) { seen[k.code] = 1; out.push(k); }
+    });
+    return out;
+  }
+
+  var held = {};  // DOM code -> number of fingers holding it
+  function sendKey(type, k) {
+    var ev = new KeyboardEvent(type, { key: k.key, code: k.code, location: k.location,
+                                       bubbles: true, cancelable: true });
+    Object.defineProperty(ev, 'keyCode', { get: function () { return k.keyCode; } });
+    Object.defineProperty(ev, 'which', { get: function () { return k.keyCode; } });
+    canvas.dispatchEvent(ev);
+  }
+  var heldKey = {};  // DOM code -> key description, for releasing
+  function press(k) {
+    heldKey[k.code] = k;
+    if (!held[k.code]) sendKey('keydown', k);
+    held[k.code] = (held[k.code] || 0) + 1;
+  }
+  function release(k) {
+    if (!held[k.code]) return;
+    if (--held[k.code] === 0) { delete held[k.code]; sendKey('keyup', k); }
+  }
+
+  var pointers = {};  // pointerId -> { dpad: bool, acts: [], keys: [] }
+  var dpad = document.getElementById('dpad');
+
+  function dpadActs(x, y) {
+    var r = dpad.getBoundingClientRect();
+    var dx = x - (r.left + r.width / 2), dy = y - (r.top + r.height / 2);
+    var dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist < r.width * 0.12) return [];
+    // 8 directions: each axis counts within 67.5 degrees of it.
+    var acts = [], cx = dx / dist, cy = dy / dist;
+    if (cx > 0.38) acts.push('right');
+    if (cx < -0.38) acts.push('left');
+    if (cy > 0.38) acts.push('down');
+    if (cy < -0.38) acts.push('up');
+    return acts;
+  }
+  function buttonActs(x, y) {
+    var el = document.elementFromPoint(x, y);
+    el = el && el.closest && el.closest('#touch [data-act]');
+    return el ? [el.dataset.act] : [];
+  }
+  function setActs(p, acts) {
+    var codes = keyCodes();
+    var keys = [];
+    acts.forEach(function (a) { keys = keys.concat(actionKeys(a, codes)); });
+    keys.forEach(press);
+    p.keys.forEach(release);
+    p.keys = keys;
+    p.acts = acts;
+    refreshLit();
+  }
+  function refreshLit() {
+    var on = {};
+    Object.keys(pointers).forEach(function (id) { pointers[id].acts.forEach(function (a) { on[a] = 1; }); });
+    ['up', 'down', 'left', 'right'].forEach(function (a) {
+      dpad.querySelector('.' + a[0]).classList.toggle('on', !!on[a]);
+    });
+    Array.prototype.forEach.call(touchUi.querySelectorAll('[data-act]'), function (el) {
+      el.classList.toggle('on', !!on[el.dataset.act]);
+    });
+  }
+  function track(e) {
+    var p = pointers[e.pointerId];
+    if (!p) return;
+    e.preventDefault();
+    setActs(p, p.dpad ? dpadActs(e.clientX, e.clientY) : buttonActs(e.clientX, e.clientY));
+  }
+  function end(e) {
+    var p = pointers[e.pointerId];
+    if (!p) return;
+    delete pointers[e.pointerId];
+    setActs(p, []);
+  }
+  function releaseAll() {
+    Object.keys(pointers).forEach(function (id) { var p = pointers[id]; delete pointers[id]; setActs(p, []); });
+    // Nothing should still be held, but make sure the game sees every key up.
+    Object.keys(held).forEach(function (code) { delete held[code]; sendKey('keyup', heldKey[code]); });
+    refreshLit();
+  }
+
+  touchUi.addEventListener('pointerdown', function (e) {
+    e.preventDefault();
+    var onDpad = !!(e.target.closest && e.target.closest('[data-dpad]'));
+    try { e.target.setPointerCapture(e.pointerId); } catch (err) {}
+    pointers[e.pointerId] = { dpad: onDpad, acts: [], keys: [] };
+    track(e);
+  });
+  touchUi.addEventListener('pointermove', track);
+  ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(function (type) {
+    touchUi.addEventListener(type, end);
+  });
+  touchUi.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+  window.addEventListener('touchcancel', releaseAll);
+  window.addEventListener('blur', releaseAll);
+  window.addEventListener('pagehide', releaseAll);
+  document.addEventListener('visibilitychange', function () { if (document.hidden) releaseAll(); });
+
+  function updateTouchUi() {
+    document.body.classList.toggle('touch', touchMode);
+    var show = touchMode && running && !failed && help.hidden;
+    if (!show && !touchUi.hidden) releaseAll();
+    touchUi.hidden = !show;
+    rotateHint.hidden = !(touchMode && innerHeight > innerWidth && overlay.hidden);
+  }
+  window.addEventListener('touchstart', function () {
+    if (!touchMode) { touchMode = true; updateTouchUi(); updateStart(); }
+  }, { capture: true, passive: true });
 
   // ---- Loading and start ----------------------------------------------------
   // Browsers keep audio muted until the user clicks or presses a key. Unless
@@ -322,11 +581,8 @@
   if (navigator.userActivation && navigator.userActivation.hasBeenActive) autoplayAllowed = true;
   var needGesture = !harness && !autoplayAllowed;
 
-  var gestured = !needGesture;
+  gestured = !needGesture;
   var gateAdded = false;
-  var dataReady = false;
-  var failed = false;
-  var running = false;
 
   function audioContext() {
     Module.SDL2 = Module.SDL2 || {};
@@ -372,20 +628,22 @@
     });
   });
 
+  function playText() { return touchMode ? 'Tap to play' : 'Click or press any key to play'; }
+
   function updateStart() {
-    if (failed) return;
-    if (!dataReady) {
+    if (failed || running) return;
+    if (!dataReady || !wasmReady) {
       startEl.hidden = !needGesture;
       startEl.className = '';
-      startEl.textContent = gestured ? 'The game starts as soon as it has loaded.'
-                                     : 'Click or press any key to play';
+      startEl.textContent = gestured ? 'The game starts as soon as it has loaded.' : playText();
+      if (dataReady) statusEl.textContent = 'Starting the game…';
       return;
     }
     if (!gestured) {
       statusEl.textContent = 'Ready.';
       startEl.hidden = false;
       startEl.className = 'ready';
-      startEl.textContent = 'Click or press any key to play';
+      startEl.textContent = playText();
     }
   }
 
@@ -398,16 +656,20 @@
     startEl.hidden = true;
     retryBtn.hidden = false;
     overlay.hidden = false;
+    updateTouchUi();
   }
   retryBtn.addEventListener('click', function () { location.reload(); });
 
   window.Module = {
     canvas: canvas,
     preRun: [function () {
+      // preRun runs once the WebAssembly program has loaded and compiled.
+      wasmReady = true;
       if (!gestured) {
         gateAdded = true;
         Module.addRunDependency('user-gesture');
       }
+      updateStart();
     }],
     onDataProgress: function (loaded, total, done, count, fromCache) {
       if (failed) return;
@@ -421,17 +683,22 @@
       }
     },
     onDataError: function (e) {
-      fail('Could not load the game data: ' + (e && e.message || e) +
-           '. Check your connection and reload.');
+      fail('Could not load the game data (' + (e && e.message || e) +
+           '). Check your connection and reload.');
     },
     onAbort: function (what) {
-      fail('The game stopped with an error: ' + what);
+      console.error('Game aborted:', what);
+      fail(running
+        ? 'Sorry, the game stopped because of an error. Reload to play again.'
+        : 'Sorry, the game could not start: its program did not load, or this browser ' +
+          'could not run it. Check your connection and reload.');
     },
     onRuntimeInitialized: function () {
       running = true;
       overlay.hidden = true;
       canvas.focus();
       wake();
+      updateTouchUi();
     },
     print: function (t) { console.log(t); },
     printErr: function (t) { console.warn(t); }
@@ -439,14 +706,15 @@
   // Test pages and harness runs can add hooks (e.g. onFrame) before load.
   if (window.bbHooks) Object.assign(Module, window.bbHooks);
 
+  layout();
   if (typeof WebAssembly !== 'object') {
-    fail('This browser cannot run WebAssembly, which the game needs.');
+    fail('Sorry, this browser cannot run WebAssembly, which the game needs.');
   } else {
     updateStart();
     var s = document.createElement('script');
     s.src = 'blipblop.js';
     s.async = true;
-    s.onerror = function () { fail('Could not load blipblop.js. Check your connection and reload.'); };
+    s.onerror = function () { fail('Could not load the game (blipblop.js). Check your connection and reload.'); };
     document.body.appendChild(s);
   }
 })();

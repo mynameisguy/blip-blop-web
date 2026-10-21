@@ -33,16 +33,27 @@ Every push to `main` builds the game and deploys it to GitHub Pages
 `web/index.html` scales the 640x480 canvas by the largest whole factor that
 fits the window, in device pixels, with nearest-neighbour filtering, so each
 game pixel is an exact NxN block (also in fullscreen: the Fullscreen button
-or Alt+Return). The game data (about 115 MB) downloads with a progress bar and
-is kept in the browser's Cache API, so later visits load it from disk. Because
-browsers mute audio until the first click or key press, the game starts on
-that gesture, so the music plays from the first frame.
+or Alt+Return). Only when even 1x does not fit (a small window or phone) is
+the picture scaled down to fit, smoothly, instead of being cropped.
+The game data (about 115 MB) downloads with a progress bar and is kept in
+the browser's Cache API, so later visits load it from disk. Because browsers
+mute audio until the first click, tap or key press, the game starts on that
+gesture, so the music plays from the first frame.
 
-`tools/check_shell.mjs <url>` checks loading, the start gesture, audio,
-keyboard handling and the cache. `tools/check_scaling.mjs <url> --fullscreen`
-compares screenshots at 800x600, 1366x768 and 1920x1080 with the harness
-framebuffer and fails unless every screen pixel matches (`--dpr 1,1.25,2`
-adds device pixel ratios).
+On touch devices the page shows on-screen controls (pad, Fire, Jump,
+Special, Menu, Start) in the margins beside the picture. They send the
+player 1 keys the game is set to (read from the game), plus the arrows and
+Return for the menus.
+
+- `tools/check_scaling.mjs <url> --fullscreen` compares whole screenshots at
+  800x600, 1366x768 and 1920x1080 with the harness framebuffer: the frame
+  scaled NxN, centred, uncropped, every other pixel black (`--dpr 1,2,3`
+  adds device pixel ratios, `--css` injects CSS to see it fail).
+- `tools/check_shell.mjs <url>` checks loading, the start gesture, audio,
+  keyboard and focus handling, error messages and the cache.
+- `tools/check_touch.mjs <url> [outdir] --cfg` plays to the first level on an
+  emulated phone with the touch controls (`--cfg` serves a bb.cfg with valid
+  default keys).
 
 ## Pixel comparison
 

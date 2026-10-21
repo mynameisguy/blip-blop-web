@@ -83,9 +83,11 @@
         var counted = 0;
         function onBytes(n) { counted += n; progress.loaded += n; report(); }
 
-        var fromCache = cache
-          ? cache.match(url).catch(function () { return null; })
-          : Promise.resolve(null);
+        var fromCache = Promise.resolve(null);
+        if (cache) {
+          try { fromCache = cache.match(url).catch(function () { return null; }); }
+          catch (e) {}
+        }
         return fromCache.then(function (hit) {
           if (hit) {
             return readBody(hit, entry.size, onBytes).then(function (bytes) {
@@ -109,10 +111,13 @@
               throw new Error('data/' + entry.name + ': got ' + bytes.length +
                               ' bytes, expected ' + entry.size);
             if (cache) {
-              // Caching is best effort (the quota may be full).
-              cache.put(url, new Response(bytes, {
-                headers: { 'Content-Type': 'application/octet-stream' },
-              })).catch(function () {});
+              // Caching is best effort (the quota may be full, or the
+              // browser may refuse synchronously).
+              try {
+                cache.put(url, new Response(bytes, {
+                  headers: { 'Content-Type': 'application/octet-stream' },
+                })).catch(function () {});
+              } catch (e) {}
             }
             return bytes;
           });
