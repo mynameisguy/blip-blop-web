@@ -295,6 +295,18 @@
   // filtered, so edges stay crisp and no pixel row or column comes out
   // thicker than its neighbours, as plain nearest-neighbour would make them.
   var view = document.getElementById('view');
+  // The copy reads the game's WebGL canvas outside SDL's present. Without
+  // preserveDrawingBuffer a browser may hand back a cleared buffer once the
+  // frame has been shown (Chromium happens to keep it; Safari need not), so
+  // the game's context is created with it on. Measured in Chromium, frame
+  // time is the same either way (within run-to-run noise), so it is always
+  // on rather than only on touch devices.
+  var getContext0 = HTMLCanvasElement.prototype.getContext;
+  HTMLCanvasElement.prototype.getContext = function (type, attrs) {
+    if (this === canvas && /webgl/i.test(type))
+      attrs = Object.assign({}, attrs, { preserveDrawingBuffer: true });
+    return getContext0.call(this, type, attrs);
+  };
   var viewCtx = null, viewK = 1, viewRaf = 0;
   function copyFrame() {
     viewCtx.imageSmoothingEnabled = false;
