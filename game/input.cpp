@@ -33,6 +33,19 @@
 #include "input.h"
 #include "ben_debug.h"
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
+
+// The wait loops below spin until a key changes. In the browser, key events
+// only arrive when the game yields to the page, so they must yield there.
+static void WaitLoopYield()
+{
+#ifdef __EMSCRIPTEN__
+	emscripten_sleep(10);
+#endif
+}
+
 //-----------------------------------------------------------------------------
 //		Déclaration REELLE de l'objet 'in' global
 //-----------------------------------------------------------------------------
@@ -312,6 +325,7 @@ unsigned int Input::waitKey()
 
 	while (1)
 	{
+		WaitLoopYield();
 		update();
 		for (int i = 0; i < 255; i++)
 		{
@@ -400,6 +414,7 @@ void Input::waitClean()
 	while (1)
 	{
 		bool j = false;
+		WaitLoopYield();
 		update();
 		for (int i = 0; i < 255; i++)
 		{

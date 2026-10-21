@@ -10,7 +10,7 @@ em++ -O2 -std=c++14 -w -DPLATFORM_LINUX -fexceptions -include rand_compat.h \
   -sUSE_SDL=2 -sUSE_SDL_MIXER=2 -sSDL2_MIXER_FORMATS='["ogg"]' \
   -sASYNCIFY -sASYNCIFY_STACK_SIZE=65536 \
   -sALLOW_MEMORY_GROWTH -sINITIAL_MEMORY=256MB \
-  -sFORCE_FILESYSTEM -sEXPORTED_RUNTIME_METHODS=FS,ENV,addRunDependency,removeRunDependency \
+  -sFORCE_FILESYSTEM -sEXPORTED_RUNTIME_METHODS=FS,ENV,addRunDependency,removeRunDependency,UTF8ToString \
   --pre-js "$ROOT/web/pre.js" \
   ${EXTRA_FLAGS:-} \
   -o "$OUT/blipblop.js" \
@@ -27,7 +27,17 @@ for f in *.zik; do
     ffmpeg -loglevel error -y -f mp3 -i "$f" -c:a libvorbis -q:a 10 -f ogg "$OUT/data/$f"
   fi
 done
-python3 -c 'import json,sys; print(json.dumps([l.strip() for l in open(sys.argv[1]) if l.strip()]))' \
-  "$OUT/data/files.txt" > "$OUT/data/manifest.json"
+# The manifest lists each file with its size (for the progress bar) and a
+# content hash (the page caches files by hash, so a changed file is refetched).
+python3 - "$OUT/data" <<'PY'
+import hashlib, json, os, sys
+d = sys.argv[1]
+names = [l.strip() for l in open(os.path.join(d, 'files.txt')) if l.strip()]
+out = []
+for n in names:
+    b = open(os.path.join(d, n), 'rb').read()
+    out.append({'name': n, 'size': len(b), 'hash': hashlib.sha256(b).hexdigest()[:16]})
+json.dump(out, open(os.path.join(d, 'manifest.json'), 'w'), separators=(',', ':'))
+PY
 rm "$OUT/data/files.txt"
 cp "$ROOT/web/index.html" "$OUT/index.html"

@@ -4,29 +4,452 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Blip &amp; Blop</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%23000'/%3E%3Ccircle cx='8' cy='8' r='5' fill='%23ffcc33'/%3E%3C/svg%3E">
 <style>
-  html, body { margin: 0; height: 100%; background: #000; color: #ccc; font: 14px sans-serif; }
-  body { display: flex; align-items: center; justify-content: center; }
-  canvas { width: 640px; height: 480px; image-rendering: pixelated; outline: none; }
-  #status { position: absolute; top: 8px; left: 0; right: 0; text-align: center; }
+  :root {
+    --fg: #d8d8d8;
+    --dim: #8a8a8a;
+    --accent: #ffcc33;
+    --panel: rgba(16, 16, 16, 0.92);
+    --line: #333;
+    --error: #ff6b5e;
+  }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    background: #000; color: var(--fg);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  #stage { position: fixed; inset: 0; background: #000; overflow: hidden; }
+  /* The canvas keeps its 640x480 drawing buffer. layout() sets its CSS size to
+     an integer multiple of 640x480 device pixels, so with nearest-neighbour
+     scaling every game pixel becomes an exact NxN block. */
+  #canvas {
+    position: absolute; left: 0; top: 0; width: 640px; height: 480px;
+    transform-origin: 0 0;
+    image-rendering: pixelated; image-rendering: crisp-edges;
+    outline: none; display: block;
+  }
+  #stage.idle, #stage.idle #canvas { cursor: none; }
+
+  button {
+    font: inherit; color: var(--fg); background: var(--panel);
+    border: 1px solid var(--line); border-radius: 6px;
+    padding: 5px 10px; cursor: pointer;
+  }
+  button:hover { border-color: var(--dim); }
+
+  #toolbar {
+    position: absolute; top: 8px; right: 8px; display: flex; gap: 6px;
+    transition: opacity .3s; z-index: 3;
+  }
+  #stage.idle #toolbar { opacity: 0; pointer-events: none; }
+
+  #overlay, #help {
+    position: absolute; inset: 0; display: flex;
+    align-items: center; justify-content: center; z-index: 2;
+  }
+  #overlay { background: #000; cursor: pointer; }
+  #overlay[hidden], #help[hidden] { display: none; }
+  .card {
+    width: min(420px, calc(100vw - 32px)); box-sizing: border-box;
+    padding: 20px 22px; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 10px;
+  }
+  h1 { margin: 0 0 2px; font-size: 22px; color: var(--accent); letter-spacing: .02em; }
+  .sub { margin: 0 0 16px; color: var(--dim); font-size: 13px; }
+  #bar { height: 8px; background: #222; border-radius: 4px; overflow: hidden; }
+  #bar > div { height: 100%; width: 0; background: var(--accent); transition: width .15s; }
+  #status { margin: 8px 0 0; min-height: 1.45em; color: var(--dim); font-size: 13px;
+            font-variant-numeric: tabular-nums; }
+  #status.error { color: var(--error); }
+  #start { margin: 16px 0 0; font-size: 16px; color: #fff; text-align: center; }
+  #start[hidden] { display: none; }
+  @keyframes pulse { 50% { opacity: .55; } }
+  #start.ready { animation: pulse 1.6s ease-in-out infinite; }
+  #retry { margin-top: 10px; }
+  .keys { margin: 16px 0 0; padding: 12px 0 0; border-top: 1px solid var(--line);
+          font-size: 13px; color: var(--dim); }
+  .keys p { margin: 0 0 4px; }
+  kbd {
+    font: 12px ui-monospace, Menlo, Consolas, monospace; color: var(--fg);
+    background: #222; border: 1px solid #444; border-bottom-width: 2px;
+    border-radius: 4px; padding: 0 4px;
+  }
+  #help { background: rgba(0, 0, 0, .55); }
+  #help table { width: 100%; border-collapse: collapse; margin: 6px 0 0; font-size: 13px; }
+  #help th { text-align: left; color: var(--dim); font-weight: normal; padding: 2px 6px 2px 0; }
+  #help td { padding: 2px 6px 2px 0; }
+  #help .close { float: right; }
+  #help td.note { padding-top: 8px; color: var(--dim); }
 </style>
 </head>
 <body>
-<div id="status">Loading…</div>
-<canvas id="canvas" width="640" height="480" tabindex="0" oncontextmenu="event.preventDefault()"></canvas>
+<div id="stage">
+  <canvas id="canvas" width="640" height="480" tabindex="0" oncontextmenu="event.preventDefault()"></canvas>
+
+  <div id="toolbar">
+    <button id="help-btn" type="button" tabindex="-1" title="Controls">Controls</button>
+    <button id="fs-btn" type="button" tabindex="-1" title="Fullscreen (Alt+Enter)">Fullscreen</button>
+  </div>
+
+  <div id="overlay">
+    <div class="card">
+      <h1>Blip'n Blop</h1>
+      <p class="sub">Loaded Studio's original PC game, running in your browser.</p>
+      <div id="bar"><div></div></div>
+      <p id="status" role="status">Loading…</p>
+      <button id="retry" type="button" hidden>Reload</button>
+      <p id="start" hidden>Click or press any key to play</p>
+      <div class="keys">
+        <p><kbd>↑</kbd> <kbd>↓</kbd> and <kbd>Return</kbd> move through the menus.</p>
+        <p><kbd>Esc</kbd> goes back, and opens the game menu while playing.</p>
+        <p>Player keys are set in Options › Keys.
+           <kbd>Alt</kbd>+<kbd>Return</kbd> toggles fullscreen.</p>
+      </div>
+    </div>
+  </div>
+
+  <div id="help" hidden>
+    <div class="card">
+      <button class="close" id="help-close" type="button" tabindex="-1">Close</button>
+      <h1>Controls</h1>
+      <p class="sub">Your current keys, as set in Options › Keys.</p>
+      <table id="bindings"></table>
+      <div class="keys">
+        <p><kbd>↑</kbd> <kbd>↓</kbd> and <kbd>Return</kbd> move through the menus.</p>
+        <p><kbd>Esc</kbd> goes back, and opens the game menu while playing.</p>
+        <p><kbd>Alt</kbd>+<kbd>Return</kbd> or the Fullscreen button toggles fullscreen.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
+(function () {
+  var stage = document.getElementById('stage');
+  var canvas = document.getElementById('canvas');
+  var overlay = document.getElementById('overlay');
+  var bar = document.querySelector('#bar > div');
   var statusEl = document.getElementById('status');
-  var Module = {
-    canvas: document.getElementById('canvas'),
-    onDataProgress: function (done, total) { statusEl.textContent = 'Loading data ' + done + ' / ' + total; },
-    onDataError: function (e) { statusEl.textContent = 'Failed to load: ' + e.message; },
-    onRuntimeInitialized: function () { statusEl.textContent = ''; Module.canvas.focus(); },
+  var startEl = document.getElementById('start');
+  var retryBtn = document.getElementById('retry');
+  var help = document.getElementById('help');
+
+  // ---- Integer scaling --------------------------------------------------
+  // Stage size in device pixels, exact when the browser reports it.
+  var stageDevice = null;
+
+  // Picks the device pixel nearest to `want` that is also a whole CSS pixel.
+  // Browsers round layer positions in CSS pixels, so this is the only kind
+  // of position that lands exactly on a device pixel at any ratio.
+  function snap(want, dpr) {
+    var base = Math.round(want);
+    for (var d = 0; d <= 64; d++) {
+      for (var s = -1; s <= 1; s += 2) {
+        var v = base + s * d;
+        // (Ratios such as 1.1 are float32 values, so allow a tiny error.)
+        if (Math.abs(v / dpr - Math.round(v / dpr)) < 1e-4) return v;
+      }
+    }
+    return base;
+  }
+
+  function layout() {
+    var dpr = window.devicePixelRatio || 1;
+    var dw = Math.round(stage.clientWidth * dpr);
+    var dh = Math.round(stage.clientHeight * dpr);
+    // Prefer the exact device size, unless it disagrees with the CSS size
+    // (some emulated or zoomed setups report CSS pixels there).
+    if (stageDevice && Math.abs(stageDevice[0] - dw) <= 1 && Math.abs(stageDevice[1] - dh) <= 1) {
+      dw = stageDevice[0];
+      dh = stageDevice[1];
+    }
+    var n = Math.max(1, Math.floor(Math.min(dw / 640, dh / 480)));
+    var left = snap((dw - 640 * n) / 2, dpr);
+    var top = snap((dh - 480 * n) / 2, dpr);
+    // The size is set in device pixels and scaled down by the ratio with a
+    // transform: a CSS width such as 640 * 2 / 1.1 px cannot be stored
+    // exactly, a transform can.
+    canvas.style.width = (640 * n) + 'px';
+    canvas.style.height = (480 * n) + 'px';
+    canvas.style.transform = 'translate(' + Math.round(left / dpr) + 'px,' +
+      Math.round(top / dpr) + 'px) scale(' + (1 / dpr) + ')';
+    canvas.dataset.scale = n;
+  }
+
+  if (typeof ResizeObserver !== 'undefined') {
+    var ro = new ResizeObserver(function (entries) {
+      var e = entries[entries.length - 1];
+      var box = e.devicePixelContentBoxSize && e.devicePixelContentBoxSize[0];
+      stageDevice = box ? [box.inlineSize, box.blockSize] : null;
+      layout();
+    });
+    try { ro.observe(stage, { box: 'device-pixel-content-box' }); }
+    catch (err) { ro.observe(stage); }
+  }
+  window.addEventListener('resize', layout);
+  document.addEventListener('fullscreenchange', layout);
+  layout();
+
+  // ---- Fullscreen -------------------------------------------------------
+  function isFullscreen() {
+    return !!(document.fullscreenElement || document.webkitFullscreenElement);
+  }
+  function toggleFullscreen() {
+    if (isFullscreen()) {
+      (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+    } else {
+      var req = stage.requestFullscreen || stage.webkitRequestFullscreen;
+      if (req) {
+        var p = req.call(stage, { navigationUI: 'hide' });
+        if (p && p.catch) p.catch(function () {});
+      }
+    }
+    canvas.focus();
+  }
+  var fsBtn = document.getElementById('fs-btn');
+  if (!(stage.requestFullscreen || stage.webkitRequestFullscreen)) fsBtn.hidden = true;
+  function updateFsButton() { fsBtn.textContent = isFullscreen() ? 'Exit fullscreen' : 'Fullscreen'; }
+  document.addEventListener('fullscreenchange', updateFsButton);
+  document.addEventListener('webkitfullscreenchange', updateFsButton);
+
+  // Toolbar buttons never take focus, so Space and Return keep going to the
+  // game instead of pressing the button again.
+  Array.prototype.forEach.call(document.querySelectorAll('button[tabindex="-1"]'), function (b) {
+    b.addEventListener('mousedown', function (e) { e.preventDefault(); });
+  });
+  fsBtn.addEventListener('click', toggleFullscreen);
+
+  // ---- Controls panel -------------------------------------------------------
+  var LABELS = { UP: 'Up', DOWN: 'Down', LEFT: 'Left', RIGHT: 'Right',
+                 FIRE: 'Fire', JUMP: 'Jump', SUPER: 'Special' };
+  function showHelp(show) {
+    help.hidden = !show;
+    if (show) {
+      var table = document.getElementById('bindings');
+      table.textContent = '';
+      var keys = {};
+      try {
+        if (running && Module._bb_key_bindings)
+          Module.UTF8ToString(Module._bb_key_bindings()).split('\n').forEach(function (l) {
+            var i = l.indexOf('=');
+            if (i > 0) keys[l.slice(0, i)] = l.slice(i + 1);
+          });
+      } catch (err) {}
+      if (!keys.P1_UP) {
+        table.innerHTML = '<tr><td>The keys appear here once the game has started.</td></tr>';
+        return;
+      }
+      var head = table.insertRow();
+      ['', 'Player 1', 'Player 2'].forEach(function (t) {
+        var th = document.createElement('th'); th.textContent = t; head.appendChild(th);
+      });
+      var unset = false;
+      function name(v) {
+        if (v && v !== 'UNDEFINED') return v;
+        unset = true;
+        return 'not set';
+      }
+      Object.keys(LABELS).forEach(function (k) {
+        var row = table.insertRow();
+        row.insertCell().textContent = LABELS[k];
+        row.insertCell().textContent = name(keys['P1_' + k]);
+        row.insertCell().textContent = name(keys['P2_' + k]);
+      });
+      if (unset) {
+        var note = table.insertRow().insertCell();
+        note.colSpan = 3;
+        note.className = 'note';
+        note.textContent = 'Choose the missing keys in Options › Keys on the main menu.';
+      }
+    } else {
+      canvas.focus();
+    }
+  }
+  document.getElementById('help-btn').addEventListener('click', function () { showHelp(help.hidden); });
+  document.getElementById('help-close').addEventListener('click', function () { showHelp(false); });
+  help.addEventListener('click', function (e) { if (e.target === help) showHelp(false); });
+
+  // ---- Keyboard -------------------------------------------------------------
+  // The game (SDL) listens for keys on window. This capture listener runs
+  // first and keeps a few keys for the browser and the page.
+  window.addEventListener('keydown', function (e) {
+    if (e.key === 'F11') {
+      // Browser fullscreen. The page relayouts on resize.
+      e.stopImmediatePropagation();
+    } else if (e.key === 'Enter' && e.altKey && !e.ctrlKey && !e.metaKey) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (!e.repeat) toggleFullscreen();
+    } else if (e.key === 'Escape' && !help.hidden) {
+      e.stopImmediatePropagation();
+      showHelp(false);
+    }
+  }, true);
+  // Keys the game uses must not scroll the page or move focus.
+  var GAME_KEYS = { ' ': 1, ArrowUp: 1, ArrowDown: 1, ArrowLeft: 1, ArrowRight: 1,
+                    PageUp: 1, PageDown: 1, Home: 1, End: 1, Tab: 1, Alt: 1, Backspace: 1 };
+  ['keydown', 'keyup'].forEach(function (type) {
+    window.addEventListener(type, function (e) {
+      if (GAME_KEYS[e.key] && !(e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)))
+        e.preventDefault();
+    });
+  });
+
+  // Hide the cursor and toolbar when the mouse is still.
+  var idleTimer = 0;
+  function wake() {
+    stage.classList.remove('idle');
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(function () {
+      if (overlay.hidden && help.hidden) stage.classList.add('idle');
+    }, 2500);
+  }
+  stage.addEventListener('mousemove', wake);
+  stage.addEventListener('mousedown', wake);
+  canvas.addEventListener('mousedown', function () { canvas.focus(); });
+
+  // ---- Loading and start ----------------------------------------------------
+  // Browsers keep audio muted until the user clicks or presses a key. Unless
+  // audio is already allowed, main() waits for that first gesture, so the
+  // game starts with its music and sound from the very first frame.
+  var params = new URLSearchParams(location.search);
+  var harness = !!window.bbHooks || Array.from(params.keys()).some(function (k) { return k.indexOf('BB_') === 0; });
+  var autoplayAllowed = false;
+  try {
+    autoplayAllowed = navigator.getAutoplayPolicy && navigator.getAutoplayPolicy('audiocontext') === 'allowed';
+  } catch (err) {}
+  if (navigator.userActivation && navigator.userActivation.hasBeenActive) autoplayAllowed = true;
+  var needGesture = !harness && !autoplayAllowed;
+
+  var gestured = !needGesture;
+  var gateAdded = false;
+  var dataReady = false;
+  var failed = false;
+  var running = false;
+
+  function audioContext() {
+    Module.SDL2 = Module.SDL2 || {};
+    if (!Module.SDL2.audioContext) {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (AC) Module.SDL2.audioContext = new AC();
+    }
+    return Module.SDL2.audioContext;
+  }
+
+  function onGesture(e) {
+    if (gestured || failed) return;
+    if (e.type === 'keydown') {
+      if (/^(Shift|Control|Alt|Meta|CapsLock|Escape|F11|F12|Tab)$/.test(e.key)) return;
+      // This key only starts the game; the game must not see it.
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    }
+    // Keep focus where it is (on the canvas once the game starts) instead of
+    // letting the click move it to the overlay.
+    if (e.type === 'mousedown') e.preventDefault();
+    gestured = true;
+    // SDL picks up an existing Module.SDL2.audioContext instead of making
+    // its own, so creating and resuming it inside the gesture unlocks audio.
+    try {
+      var ctx = audioContext();
+      if (ctx && ctx.state !== 'running') ctx.resume().catch(function () {});
+    } catch (err) {}
+    if (gateAdded) {
+      gateAdded = false;
+      Module.removeRunDependency('user-gesture');
+    }
+    updateStart();
+  }
+  ['keydown', 'mousedown', 'pointerup', 'touchend'].forEach(function (type) {
+    window.addEventListener(type, onGesture, true);
+  });
+  // Later gestures also resume audio if the browser suspended it again.
+  ['keydown', 'mousedown', 'touchend'].forEach(function (type) {
+    window.addEventListener(type, function () {
+      var ctx = Module.SDL2 && Module.SDL2.audioContext;
+      if (gestured && ctx && ctx.state === 'suspended') ctx.resume().catch(function () {});
+    });
+  });
+
+  function updateStart() {
+    if (failed) return;
+    if (!dataReady) {
+      startEl.hidden = !needGesture;
+      startEl.className = '';
+      startEl.textContent = gestured ? 'The game starts as soon as it has loaded.'
+                                     : 'Click or press any key to play';
+      return;
+    }
+    if (!gestured) {
+      statusEl.textContent = 'Ready.';
+      startEl.hidden = false;
+      startEl.className = 'ready';
+      startEl.textContent = 'Click or press any key to play';
+    }
+  }
+
+  function mb(n) { return (n / 1048576).toFixed(1); }
+
+  function fail(msg) {
+    failed = true;
+    statusEl.className = 'error';
+    statusEl.textContent = msg;
+    startEl.hidden = true;
+    retryBtn.hidden = false;
+    overlay.hidden = false;
+  }
+  retryBtn.addEventListener('click', function () { location.reload(); });
+
+  window.Module = {
+    canvas: canvas,
+    preRun: [function () {
+      if (!gestured) {
+        gateAdded = true;
+        Module.addRunDependency('user-gesture');
+      }
+    }],
+    onDataProgress: function (loaded, total, done, count, fromCache) {
+      if (failed) return;
+      bar.style.width = (total ? 100 * loaded / total : 0).toFixed(1) + '%';
+      statusEl.textContent = (fromCache ? 'Loading saved game data… ' : 'Downloading game data… ') +
+        mb(loaded) + ' / ' + mb(total) + ' MB';
+      if (done === count) {
+        dataReady = true;
+        statusEl.textContent = 'Loaded ' + mb(total) + ' MB.';
+        updateStart();
+      }
+    },
+    onDataError: function (e) {
+      fail('Could not load the game data: ' + (e && e.message || e) +
+           '. Check your connection and reload.');
+    },
+    onAbort: function (what) {
+      fail('The game stopped with an error: ' + what);
+    },
+    onRuntimeInitialized: function () {
+      running = true;
+      overlay.hidden = true;
+      canvas.focus();
+      wake();
+    },
     print: function (t) { console.log(t); },
     printErr: function (t) { console.warn(t); }
   };
   // Test pages and harness runs can add hooks (e.g. onFrame) before load.
   if (window.bbHooks) Object.assign(Module, window.bbHooks);
+
+  if (typeof WebAssembly !== 'object') {
+    fail('This browser cannot run WebAssembly, which the game needs.');
+  } else {
+    updateStart();
+    var s = document.createElement('script');
+    s.src = 'blipblop.js';
+    s.async = true;
+    s.onerror = function () { fail('Could not load blipblop.js. Check your connection and reload.'); };
+    document.body.appendChild(s);
+  }
+})();
 </script>
-<script async src="blipblop.js"></script>
 </body>
 </html>

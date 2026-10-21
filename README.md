@@ -28,6 +28,22 @@ are MP3 files, and the browser mixer only decodes OGG, so the build re-encodes t
 Every push to `main` builds the game and deploys it to GitHub Pages
 (`.github/workflows/pages.yml`).
 
+## The page
+
+`web/index.html` scales the 640x480 canvas by the largest whole factor that
+fits the window, in device pixels, with nearest-neighbour filtering, so each
+game pixel is an exact NxN block (also in fullscreen: the Fullscreen button
+or Alt+Return). The game data (about 115 MB) downloads with a progress bar and
+is kept in the browser's Cache API, so later visits load it from disk. Because
+browsers mute audio until the first click or key press, the game starts on
+that gesture, so the music plays from the first frame.
+
+`tools/check_shell.mjs <url>` checks loading, the start gesture, audio,
+keyboard handling and the cache. `tools/check_scaling.mjs <url> --fullscreen`
+compares screenshots at 800x600, 1366x768 and 1920x1080 with the harness
+framebuffer and fails unless every screen pixel matches (`--dpr 1,1.25,2`
+adds device pixel ratios).
+
 ## Pixel comparison
 
 `game/harness.cpp` adds an opt-in test mode, driven by environment variables
