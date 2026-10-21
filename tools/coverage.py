@@ -4,27 +4,33 @@
 Plays every part of the game (menus, character selection, each level of
 data/bb.lst with its briefing, RPG dialogue scenes, the pause menu, game over,
 hi-scores and the end sequence) in both builds with the fixed-step harness and
-the same input script, dumps sampled frames and compares them pixel for pixel
-with tools/compare_frames.py.
+the same input script, and compares every frame by a hash of its pixels
+(BB_HASH_EVERY, computed by the same harness code in both builds). Pictures
+and diff images are saved only for frames that differ.
 
 usage: python3 tools/coverage.py [--native BIN] [--dist DIR] [--out DIR]
-                                 [--jobs N] [--every N] [segment ...]
+                                 [--jobs N] [--every N] [--repeat N]
+                                 [--list] [segment ...]
 
   --native  native binary built from game/ with CMake (default: build/blipblop)
   --dist    browser build output (default: web/dist); served on a free port
-  --out     work directory (default: /tmp/bb-coverage); frames, diffs, logs
+  --out     work directory (default: /tmp/bb-coverage): hashes, logs, diffs
+  --every   compare every Nth frame (default 1: every frame)
+  --repeat  run the native build N times per segment and require identical
+            hashes, to catch nondeterminism such as uninitialised memory
   segment   names to run (default: all); --list prints them
 
 Needs Playwright for Node (tools/web_dump.mjs) and CHROMIUM_PATH if Chromium
-is not where Playwright looks by default. Exits non-zero if any compared frame
-differs, a run produced no frames, or the browser missed a frame.
+is not where Playwright looks by default. Exits 1 if any frame differs, a run
+crashed, exited non-zero or missed frames, or native repeats disagree; exits
+with a "disk full" message if frames could not be written.
 """
 import argparse
+import errno
 import functools
 import http.server
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -34,7 +40,6 @@ from concurrent.futures import ThreadPoolExecutor
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STEP_MS = 11
-
 
 class Script:
     """Input script for BB_INPUT_SCRIPT: '<step> <down|up> <SDL key name>'."""
@@ -106,7 +111,8 @@ def segments():
     segs = []
     base = {'BB_DEFAULT_CONFIG': '1'}
 
-    # The intro cinematic untouched, as in the README (the regression bar).
+    # The intro cinematic untouched, every 50th frame as in the README (the
+    # regression bar).
     segs.append(dict(name='intro', env={}, script=Script(), frames=1500,
                      every=50))
 
@@ -136,7 +142,7 @@ def segments():
     s.press(530, 'Return')     # briefing
     end = play(s, 540, 160)
     segs.append(dict(name='menus', env=dict(base, BB_START_LEVEL='1'),
-                     script=s, frames=end, every=5))
+                     script=s, frames=end))
 
     # Each level, from the briefing before it. Level 1 also opens the pause
     # menu and resumes.
@@ -153,7 +159,7 @@ def segments():
         end = play(s, t0, length)
         segs.append(dict(name=f'level{i:02d}-{lvl}',
                          env=dict(base, BB_START_LEVEL=str(i)),
-                         script=s, frames=end, every=10))
+                         script=s, frames=end))
 
     # Game over: one life in level 2, walk right into the smurfs without
     # shooting until killed (~step 1450), then the game over screen until a
@@ -166,7 +172,7 @@ def segments():
     s.press(2100, 'Return')
     segs.append(dict(name='gameover', env=dict(base, BB_START_LEVEL='2',
                                                BB_LIVES='1'),
-                     script=s, frames=2300, every=20))
+                     script=s, frames=2300))
 
     # End sequence: the whole end cinematic (~3000 steps), the end picture,
     # the end credits (~9000 steps), THE END / level complete, entering a
@@ -180,14 +186,13 @@ def segments():
         s.press(12900 + 50 * i, key)
     s.press(13250, 'Return')   # name done -> hi-score table
     segs.append(dict(name='ending', env=dict(base, BB_START_LEVEL='13'),
-                     script=s, frames=14200, every=25))
+                     script=s, frames=14200))
 
     # Attract mode: idle on the main menu -> title screen -> menu -> hi-score
     # table.
     s = Script()
     s.press(SKIP_INTRO, 'Escape', 2)
-    segs.append(dict(name='attract', env=dict(base), script=s, frames=3300,
-                     every=50))
+    segs.append(dict(name='attract', env=dict(base), script=s, frames=3300))
     return segs
 
 
@@ -203,76 +208,166 @@ class QuietHandler(http.server.SimpleHTTPRequestHandler):
         pass
 
 
-def run_native(binary, seg, out, script_path):
-    run_dir = os.path.join(out, 'native-run')
-    frames = os.path.join(out, 'native')
+class DiskFull(Exception):
+    pass
+
+
+def read_hashes(path):
+    """'<frame> <hash>' lines -> {frame: hash}."""
+    if not os.path.exists(path):
+        return {}
+    with open(path) as f:
+        return dict(line.split() for line in f if line.strip())
+
+
+def describe_exit(code):
+    if code is None:
+        return 'timed out'
+    if code < 0:
+        return f'crashed (signal {-code})'
+    return f'exit status {code}'
+
+
+def run_native(args, seg, out, script_path, every, tag, dump_frames=None):
+    """One native run. Returns (problem or None, {frame: hash})."""
+    run_dir = os.path.join(out, f'native-run-{tag}')
+    hashes = os.path.join(out, f'native-{tag}.hashes')
     shutil.rmtree(run_dir, ignore_errors=True)
-    shutil.rmtree(frames, ignore_errors=True)
-    os.makedirs(frames)
     # The game writes data/bb.cfg and data/bb.scr: run it on a copy.
     shutil.copytree(os.path.join(ROOT, 'game', 'data'),
                     os.path.join(run_dir, 'data'))
     env = dict(os.environ, SDL_VIDEODRIVER='offscreen',
                SDL_RENDER_DRIVER='software', SDL_AUDIODRIVER='dummy',
-               BB_FIXED_STEP_MS=str(STEP_MS), BB_DUMP_DIR=frames,
-               BB_DUMP_EVERY=str(seg['every']), BB_MAX_FRAMES=str(seg['frames']),
+               BB_FIXED_STEP_MS=str(STEP_MS), BB_HASH_EVERY=str(every),
+               BB_HASH_FILE=hashes, BB_MAX_FRAMES=str(seg['frames']),
                BB_INPUT_SCRIPT=script_path, **seg['env'])
-    with open(os.path.join(out, 'native.log'), 'w') as log:
-        subprocess.run([os.path.abspath(binary)], cwd=run_dir, env=env,
-                       stdout=log, stderr=subprocess.STDOUT, timeout=1800)
+    if dump_frames:
+        frames = os.path.join(out, 'native')
+        os.makedirs(frames, exist_ok=True)
+        env.update(BB_DUMP_DIR=frames,
+                   BB_DUMP_FRAMES=','.join(str(n) for n in dump_frames))
+    code = None
+    with open(os.path.join(out, f'native-{tag}.log'), 'w') as log:
+        try:
+            code = subprocess.run([os.path.abspath(args.native)], cwd=run_dir,
+                                  env=env, stdout=log,
+                                  stderr=subprocess.STDOUT,
+                                  timeout=3600).returncode
+        except subprocess.TimeoutExpired:
+            pass
     shutil.rmtree(run_dir, ignore_errors=True)
-    return frames
+    if code == 3:  # the harness could not write a dump or a hash
+        raise DiskFull(f'native run could not write its output in {out}')
+    return (None if code == 0 else describe_exit(code)), read_hashes(hashes)
 
 
-def run_web(url, seg, out, script_path):
+def run_web(url, seg, out, script_path, every, dump_frames=None):
+    """One browser run. Returns (problem or None, {frame: hash})."""
     frames = os.path.join(out, 'web')
-    shutil.rmtree(frames, ignore_errors=True)
     env = dict(os.environ, BB_FIXED_STEP_MS=str(STEP_MS),
-               DUMP_TIMEOUT_MS=str(1800 * 1000), **seg['env'])
-    with open(os.path.join(out, 'web.log'), 'w') as log:
-        subprocess.run(['node', os.path.join(ROOT, 'tools', 'web_dump.mjs'),
-                        url, frames, str(seg['every']), str(seg['frames']),
-                        script_path],
-                       env=env, stdout=log, stderr=subprocess.STDOUT,
-                       timeout=2000)
-    return frames
+               BB_HASH_EVERY=str(every), DUMP_TIMEOUT_MS=str(3600 * 1000),
+               **seg['env'])
+    image_every = '0'
+    if dump_frames:
+        env['BB_DUMP_FRAMES'] = ','.join(str(n) for n in dump_frames)
+        image_every = '1'
+    log_path = os.path.join(out, 'web-images.log' if dump_frames
+                            else 'web.log')
+    code = None
+    with open(log_path, 'w') as log:
+        try:
+            code = subprocess.run(
+                ['node', os.path.join(ROOT, 'tools', 'web_dump.mjs'), url,
+                 frames, image_every, str(seg['frames']), script_path],
+                env=env, stdout=log, stderr=subprocess.STDOUT,
+                timeout=3700).returncode
+        except subprocess.TimeoutExpired:
+            pass
+    with open(log_path) as f:
+        if 'ENOSPC' in f.read():
+            raise DiskFull(f'browser run could not write its output in {out}')
+    path = os.path.join(frames, 'hashes.txt')
+    hashes = read_hashes(path)
+    if os.path.exists(path):
+        os.remove(path)
+    return (None if code == 0 else describe_exit(code)), hashes
+
+
+def save_diffs(seg, args, url, out, script_path, frames):
+    """Re-runs both builds saving only the first differing frames; keeps the
+    diff images (native | browser | changed pixels) in <out>/diff."""
+    frames = sorted(frames)[:12]
+    run_native(args, seg, out, script_path, args.every, 'images',
+               dump_frames=frames)
+    run_web(url, seg, out, script_path, args.every, dump_frames=frames)
+    subprocess.run([sys.executable,
+                    os.path.join(ROOT, 'tools', 'compare_frames.py'),
+                    os.path.join(out, 'native'), os.path.join(out, 'web'),
+                    os.path.join(out, 'diff')], capture_output=True)
+    shutil.rmtree(os.path.join(out, 'native'), ignore_errors=True)
+    shutil.rmtree(os.path.join(out, 'web'), ignore_errors=True)
 
 
 def run_segment(seg, args, url):
     out = os.path.join(args.out, seg['name'])
-    os.makedirs(out, exist_ok=True)
+    shutil.rmtree(out, ignore_errors=True)
+    os.makedirs(out)
+    every = seg.get('every', args.every)
     script_path = os.path.join(out, 'input.txt')
     with open(script_path, 'w') as f:
         f.write(seg['script'].text())
     with open(os.path.join(out, 'env.json'), 'w') as f:
-        json.dump(dict(seg['env'], BB_DUMP_EVERY=seg['every'],
+        json.dump(dict(seg['env'], BB_HASH_EVERY=every,
                        BB_MAX_FRAMES=seg['frames']), f, indent=1)
     t = time.time()
-    native = run_native(args.native, seg, out, script_path)
-    web = run_web(url, seg, out, script_path)
-    diff = os.path.join(out, 'diff')
-    shutil.rmtree(diff, ignore_errors=True)
-    r = subprocess.run([sys.executable, os.path.join(ROOT, 'tools',
-                                                     'compare_frames.py'),
-                        native, web, diff], capture_output=True, text=True)
+    problems = []
+
+    runs = []
+    for i in range(args.repeat):
+        err, hashes = run_native(args, seg, out, script_path, every, i + 1)
+        if err:
+            problems.append(f'native run {i + 1}: {err}')
+        runs.append(hashes)
+    native = runs[0]
+    unstable = sorted({n for h in runs[1:] for n in set(h) | set(native)
+                       if h.get(n) != native.get(n)})
+    if unstable:
+        problems.append(f'native runs disagree on {len(unstable)} frames '
+                        f'(first {unstable[0]})')
+
+    err, web = run_web(url, seg, out, script_path, every)
+    if err:
+        problems.append(f'browser: {err}')
+    for name, h in (('native', native), ('browser', web)):
+        if not h:
+            problems.append(f'{name}: no frames')
+    lonely = sorted(set(native) ^ set(web))
+    if lonely:
+        problems.append(f'{len(lonely)} frames in one build only '
+                        f'(first {lonely[0]})')
+    common = sorted(set(native) & set(web))
+    differ = [n for n in common if native[n] != web[n]]
     with open(os.path.join(out, 'compare.txt'), 'w') as f:
-        f.write(r.stdout + r.stderr)
-    n_native = len([f for f in os.listdir(native) if f.endswith('.bmp')])
-    n_web = len([f for f in os.listdir(web) if f.endswith('.rgba')]) \
-        if os.path.isdir(web) else 0
-    m = re.search(r'(\d+)/(\d+) frames identical', r.stdout)
-    same, total = (int(m.group(1)), int(m.group(2))) if m else (0, 0)
-    bad = [l for l in r.stdout.splitlines()
-           if l.startswith('frame_') and not l.endswith('identical')]
-    res = dict(name=seg['name'], steps=seg['frames'], every=seg['every'],
-               native_frames=n_native, web_frames=n_web, compared=total,
-               identical=same, mismatches=bad, seconds=round(time.time() - t))
-    ok = total > 0 and same == total and n_web == n_native
-    print(f"{seg['name']:22s} {total:4d} compared {same:4d} identical "
-          f"(native {n_native}, browser {n_web}) "
-          f"{'OK' if ok else 'FAIL'}  {res['seconds']}s", flush=True)
-    for l in bad[:10]:
-        print('    ' + l, flush=True)
+        for n in common:
+            same = native[n] == web[n]
+            f.write(f"frame_{n}: {'identical' if same else 'different'}\n")
+        f.write(f'{len(common) - len(differ)}/{len(common)} frames identical\n')
+    if differ:
+        problems.append(f'{len(differ)} frames differ (first {differ[0]}); '
+                        f'diff images in {out}/diff')
+        save_diffs(seg, args, url, out, script_path, [int(n) for n in differ])
+
+    res = dict(name=seg['name'], steps=seg['frames'], every=every,
+               native_frames=len(native), web_frames=len(web),
+               compared=len(common), identical=len(common) - len(differ),
+               native_runs=args.repeat, problems=problems,
+               seconds=round(time.time() - t))
+    print(f"{seg['name']:20s} {res['compared']:6d} compared "
+          f"{res['identical']:6d} identical (native {len(native)} x"
+          f"{args.repeat}, browser {len(web)}) "
+          f"{'FAIL' if problems else 'OK'}  {res['seconds']}s", flush=True)
+    for p in problems:
+        print('    ' + p, flush=True)
     return res
 
 
@@ -282,8 +377,8 @@ def main():
     ap.add_argument('--dist', default=os.path.join(ROOT, 'web', 'dist'))
     ap.add_argument('--out', default='/tmp/bb-coverage')
     ap.add_argument('--jobs', type=int, default=2)
-    ap.add_argument('--every', type=int,
-                    help='dump every N frames in all segments (default: per segment)')
+    ap.add_argument('--every', type=int, default=1)
+    ap.add_argument('--repeat', type=int, default=1)
     ap.add_argument('--list', action='store_true')
     ap.add_argument('segments', nargs='*')
     args = ap.parse_args()
@@ -291,39 +386,47 @@ def main():
     segs = segments()
     if args.list:
         for s in segs:
-            print(f"{s['name']:22s} {s['frames']:5d} steps, every {s['every']}, "
-                  f"{s['env']}")
+            print(f"{s['name']:20s} {s['frames']:5d} steps  {s['env']}")
         return
     if args.segments:
         unknown = set(args.segments) - {s['name'] for s in segs}
         if unknown:
             sys.exit(f'unknown segments: {sorted(unknown)}')
         segs = [s for s in segs if s['name'] in args.segments]
+    if args.every < 1 or args.repeat < 1:
+        sys.exit('--every and --repeat must be at least 1')
+    if not os.path.exists(args.native):
+        sys.exit(f'native binary not found: {args.native}')
 
-    if args.every:
-        for s in segs:
-            s['every'] = args.every
-
-    os.makedirs(args.out, exist_ok=True)
-    httpd = serve(args.dist)
-    url = f'http://127.0.0.1:{httpd.server_address[1]}/'
-    with ThreadPoolExecutor(args.jobs) as pool:
-        results = list(pool.map(lambda s: run_segment(s, args, url), segs))
-    httpd.shutdown()
+    try:
+        os.makedirs(args.out, exist_ok=True)
+        free = shutil.disk_usage(args.out).free
+        if free < 1 << 30:
+            raise DiskFull(f'only {free >> 20} MB free under {args.out}')
+        httpd = serve(args.dist)
+        url = f'http://127.0.0.1:{httpd.server_address[1]}/'
+        with ThreadPoolExecutor(args.jobs) as pool:
+            results = list(pool.map(lambda s: run_segment(s, args, url),
+                                    segs))
+        httpd.shutdown()
+        with open(os.path.join(args.out, 'summary.json'), 'w') as f:
+            json.dump(results, f, indent=1)
+    except DiskFull as e:
+        sys.exit(f'disk full: {e}')
+    except OSError as e:
+        if e.errno == errno.ENOSPC:
+            sys.exit(f'disk full: {e}')
+        raise
 
     print()
-    print(f"{'segment':22s} {'compared':>8s} {'identical':>9s}")
+    print(f"{'segment':20s} {'compared':>8s} {'identical':>9s}  result")
     for r in results:
-        print(f"{r['name']:22s} {r['compared']:8d} {r['identical']:9d}")
+        print(f"{r['name']:20s} {r['compared']:8d} {r['identical']:9d}  "
+              f"{'FAIL' if r['problems'] else 'OK'}")
     total = sum(r['compared'] for r in results)
     same = sum(r['identical'] for r in results)
-    print(f"{'total':22s} {total:8d} {same:9d}")
-    with open(os.path.join(args.out, 'summary.json'), 'w') as f:
-        json.dump(results, f, indent=1)
-    failed = [r for r in results if not (r['compared'] > 0 and
-              r['identical'] == r['compared'] and
-              r['web_frames'] == r['native_frames'])]
-    sys.exit(1 if failed else 0)
+    print(f"{'total':20s} {total:8d} {same:9d}")
+    sys.exit(1 if any(r['problems'] for r in results) else 0)
 
 
 if __name__ == '__main__':

@@ -7,8 +7,13 @@
 //   BB_FIXED_STEP_MS  virtual clock: time advances this many ms per frame
 //   BB_DUMP_DIR       native: write every Nth frame here as BMP
 //   BB_DUMP_EVERY     dump period in frames (default 1)
+//   BB_DUMP_FRAMES    comma-separated frame numbers to dump instead
 //   BB_INPUT_SCRIPT   file of "<frame> <down|up> <SDL key name>" lines
-//   BB_MAX_FRAMES     quit after this many frames
+//   BB_MAX_FRAMES     quit after this many frames (native: exit status 3
+//                     if a frame dump or hash could not be written)
+//   BB_HASH_EVERY     hash every Nth frame's pixels: native writes
+//                     "<frame> <hash>" lines to BB_HASH_FILE, the browser
+//                     calls Module.onFrameHash(frame, hi32, lo32)
 //   BB_START_LEVEL    start a new game at level N of data/bb.lst (1-based),
 //                     including the briefing before it; one past the last
 //                     level goes straight to the end sequence

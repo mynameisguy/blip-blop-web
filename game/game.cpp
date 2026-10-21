@@ -2242,7 +2242,10 @@ void Game::updateDeformation() {
 
 void Game::drawDeformation() {
     DDBLTFX ddfx;
-    Rect r;
+    // The original left r uninitialised, and the first line's BltFast below
+    // read r.left/r.right before any assignment when sini() >= 0. An empty
+    // source rectangle (a no-op blit) is what the browser build draws.
+    Rect r = {};
     int pas = 20;
     int phi = phi_deform;
     int dphi = 10;

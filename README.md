@@ -58,15 +58,20 @@ per turn of a blocking "press a key" wait, so scripts can get past those.
 input script (menus and options, character selection, each level with its
 briefing while running, jumping and shooting, the pause menu, RPG dialogue
 scenes, game over, the end cinematic and credits, hi-score name entry and
-table, attract mode), dumps sampled frames and compares them.
+table, attract mode) and compares every frame. The harness hashes each
+frame's pixels (`BB_HASH_EVERY`, same code in both builds), so nothing big is
+written; pictures and diff images are saved only for frames that differ.
 
 ```sh
 cmake game -B build && make -C build -j8
 web/build.sh
-CHROMIUM_PATH=/path/to/chromium python3 tools/coverage.py --jobs 3
+CHROMIUM_PATH=/path/to/chromium python3 tools/coverage.py --jobs 3 --repeat 2
 python3 tools/coverage.py --list          # segments
 python3 tools/coverage.py level05-bisous2 # one segment
 ```
 
-It serves `web/dist` itself and writes frames, diffs and a `summary.json`
-under `--out` (default `/tmp/bb-coverage`).
+`--repeat N` runs the native build N times per segment and fails if the runs
+disagree (uninitialised memory and the like). A run that crashes, exits
+non-zero or misses frames also fails. It serves `web/dist` itself and writes
+hashes, logs, diffs and a `summary.json` under `--out` (default
+`/tmp/bb-coverage`).

@@ -21,6 +21,8 @@ class KeysMenu : public AbstractMenu {
 
     std::array<std::tuple<int, int, int>, 7> dat_;
     MenuList items_;
-    State state_;
+    // Was left uninitialised; the menu opens on the key list, not waiting
+    // for a key (EditKey() switches to WaitingKey on Return).
+    State state_ = State::Browsing;
     int player_;
 };
