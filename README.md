@@ -44,3 +44,18 @@ npm i playwright
 node tools/web_dump.mjs http://localhost:8000/ /tmp/web 50 1500
 python3 tools/compare_frames.py /tmp/native /tmp/web /tmp/diff
 ```
+
+## Saves and input
+
+The settings (`data/bb.cfg`: keys, options) and hi-scores (`data/bb.scr`)
+persist in the browser's IndexedDB. A browser tab closes without reaching
+the save code at the end of `main()`, so the browser build saves each file as
+soon as it changes (options menu, keys menu, hi-score entry) and again when
+the page is hidden. Add `BB_NO_PERSIST=1` to run with the shipped files only.
+
+Both tests drive the game with real browser key events:
+
+```sh
+node tools/input_test.mjs http://localhost:8000/   # menus, both players, keys the page must not act on, gamepad, AZERTY
+node tools/saves_test.mjs http://localhost:8000/   # settings and hi-scores survive a reload
+```

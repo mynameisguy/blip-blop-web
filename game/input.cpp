@@ -33,6 +33,16 @@
 #include "input.h"
 #include "ben_debug.h"
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+// waitKey() and waitClean() spin until a key goes down or up. A browser only
+// delivers key events while the page has control, so the spin would freeze the
+// tab: hand control back on every pass (Asyncify resumes the loop after).
+#define WAIT_LOOP_YIELD() emscripten_sleep(5)
+#else
+#define WAIT_LOOP_YIELD()
+#endif
+
 //-----------------------------------------------------------------------------
 //		Déclaration REELLE de l'objet 'in' global
 //-----------------------------------------------------------------------------
@@ -365,6 +375,7 @@ unsigned int Input::waitKey()
 			}
 			//return (js[k].buttons[i] | (0x400));
 		}
+		WAIT_LOOP_YIELD();
 	}
 	/*unsigned int	i = 0;
 	int				j;
@@ -435,6 +446,7 @@ void Input::waitClean()
 
 		if (!j)
 			return;
+		WAIT_LOOP_YIELD();
 	}
 	/*unsigned int		i, j = 1;		// Bcoz si j = 0 alors on sort tout de suite!
 

@@ -34,16 +34,25 @@ int OptionsPanel::ProcessEvent() {
         in.scanKey(DIK_LEFT) || in.scanAlias(ALIAS_P1_LEFT)) {
         vSyncOn = !vSyncOn;
         RefreshVsync();
+#ifdef __EMSCRIPTEN__
+        web_save_config();
+#endif
     }
     if (in.scanKey(DIK_RETURN) || in.scanAlias(ALIAS_P1_FIRE)) {
         switch (items_.focused()) {
             case 0:
                 vSyncOn = !vSyncOn;
                 RefreshVsync();
+#ifdef __EMSCRIPTEN__
+                web_save_config();
+#endif
                 break;
             case 1:
                 fullscreen = !fullscreen;
                 DDToggleFullscreen();
+#ifdef __EMSCRIPTEN__
+                web_save_config();
+#endif
                 break;
             case 2:
                 return MenuType::Keys_1;

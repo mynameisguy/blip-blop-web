@@ -187,6 +187,10 @@ static bool InitApp(int nCmdShow) {
         debug << "Using " << HISCORES_FILE << " as hiscores file\n";
     }
 
+#ifdef __EMSCRIPTEN__
+    web_saves_ready();
+#endif
+
     //------------------------------------------------------------------
     //                      Les fichiers textes
     //------------------------------------------------------------------
