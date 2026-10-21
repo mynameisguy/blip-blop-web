@@ -74,7 +74,10 @@ void EnnemiPoid::onMeure()
 			int i;
 			Sprite * s;
 			for (i = 0; i < 8 ; i++) {
-				s = new GoreGiclure(rand() % 15 - 7, -1 - rand() % 10);
+				// Draw the arguments right to left, as GCC and MSVC evaluate them (clang goes left to right).
+				const int rnd1 = -1 - rand() % 10;
+				const int rnd0 = rand() % 15 - 7;
+				s = new GoreGiclure(rnd0, rnd1);
 				s->x = x + rand() % 80 - 40;
 				s->y = y - rand() % 30 - 10;
 				list_giclures.emplace_back(s);
@@ -84,7 +87,10 @@ void EnnemiPoid::onMeure()
 			int i;
 			Sprite * s;
 			for (i = 0; i < 6 ; i++) {
-				s = new GoreGiclure(rand() % 15 - 7, -1 - rand() % 10);
+				// Draw the arguments right to left, as GCC and MSVC evaluate them (clang goes left to right).
+				const int rnd1 = -1 - rand() % 10;
+				const int rnd0 = rand() % 15 - 7;
+				s = new GoreGiclure(rnd0, rnd1);
 				s->x = x + rand() % 80 - 40;
 				s->y = y - rand() % 30 - 10;
 				list_giclures.emplace_back(s);
@@ -94,7 +100,10 @@ void EnnemiPoid::onMeure()
 			int i;
 			Sprite * s;
 			for (i = 0; i < 5 ; i++) {
-				s = new GoreGiclure(rand() % 15 - 7, -1 - rand() % 10);
+				// Draw the arguments right to left, as GCC and MSVC evaluate them (clang goes left to right).
+				const int rnd1 = -1 - rand() % 10;
+				const int rnd0 = rand() % 15 - 7;
+				s = new GoreGiclure(rnd0, rnd1);
 				s->x = x + rand() % 80 - 40;
 				s->y = y - rand() % 30 - 10;
 				list_giclures.emplace_back(s);
@@ -105,7 +114,10 @@ void EnnemiPoid::onMeure()
 			int i;
 			Sprite * s;
 			for (i = 0; i < 4 ; i++) {
-				s = new GoreGiclure(rand() % 15 - 7, -1 - rand() % 10);
+				// Draw the arguments right to left, as GCC and MSVC evaluate them (clang goes left to right).
+				const int rnd1 = -1 - rand() % 10;
+				const int rnd0 = rand() % 15 - 7;
+				s = new GoreGiclure(rnd0, rnd1);
 				s->x = x + rand() % 80 - 40;
 				s->y = y - rand() % 30 - 10;
 				list_giclures.emplace_back(s);
@@ -115,7 +127,10 @@ void EnnemiPoid::onMeure()
 			int i;
 			Sprite * s;
 			for (i = 0; i < 3 ; i++) {
-				s = new GoreGiclure(rand() % 15 - 7, -1 - rand() % 10);
+				// Draw the arguments right to left, as GCC and MSVC evaluate them (clang goes left to right).
+				const int rnd1 = -1 - rand() % 10;
+				const int rnd0 = rand() % 15 - 7;
+				s = new GoreGiclure(rnd0, rnd1);
 				s->x = x + rand() % 80 - 40;
 				s->y = y - rand() % 30 - 10;
 				list_giclures.emplace_back(s);

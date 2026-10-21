@@ -44,10 +44,16 @@ void MorceauSnorkyBaseTeteEntiere::update()
 	if (etape == 2 && ss_etape == 0) {
 		Sprite * s;
 		if (dir == SENS_DROITE) {
-			s = new MorceauSnorkyBaseTrompe(1 + rand() % 2, -1 + rand() % 2);
+			// Draw the arguments right to left, as GCC and MSVC evaluate them (clang goes left to right).
+			const int rnd1 = -1 + rand() % 2;
+			const int rnd0 = 1 + rand() % 2;
+			s = new MorceauSnorkyBaseTrompe(rnd0, rnd1);
 			s->x = x + 19;
 		} else {
-			s = new MorceauSnorkyBaseTrompe(- 1 - rand() % 2, -1 - rand() % 2);
+			// Draw the arguments right to left, as GCC and MSVC evaluate them (clang goes left to right).
+			const int rnd1 = -1 - rand() % 2;
+			const int rnd0 = - 1 - rand() % 2;
+			s = new MorceauSnorkyBaseTrompe(rnd0, rnd1);
 			s->x = x - 19;
 		}
 

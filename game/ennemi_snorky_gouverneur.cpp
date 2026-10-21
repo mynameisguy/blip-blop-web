@@ -159,7 +159,10 @@ void EnnemiSnorkyGouverneur::onTire()
 		//{
 
 		if (tete_turc != NULL) {
-			TirSnorkyGouverneur *	tir = new TirSnorkyGouverneur(tete_turc, rand() % 6 - 2 , -5 - rand() % 5);
+			// Draw the arguments right to left, as GCC and MSVC evaluate them (clang goes left to right).
+			const int rnd2 = -5 - rand() % 5;
+			const int rnd1 = rand() % 6 - 2;
+			TirSnorkyGouverneur *	tir = new TirSnorkyGouverneur(tete_turc, rnd1, rnd2);
 
 			tir->setDir(dir);
 			tir->x = x;

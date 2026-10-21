@@ -27,4 +27,7 @@ int PauseMenu::ProcessEvent() {
         }
         return MenuType::Main;
     }
+    // Stay on the pause menu. This return was missing: native builds trapped
+    // (illegal instruction) and the browser build left the menu at once.
+    return MenuType::Main;
 }
