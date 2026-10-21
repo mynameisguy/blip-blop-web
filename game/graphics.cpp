@@ -1,6 +1,7 @@
 #include "graphics.h"
 
 #include "errors.h"
+#include "harness.h"
 
 extern SDL::Surface* backSurface;
 
@@ -139,6 +140,8 @@ bool Graphics::SetColorKey(SDL::Surface* surf, Pixel rgb) {
 }
 
 void Graphics::Flip() {
+    bb_on_frame(backSurface->Get());
+
     SDL_Texture* tex = 0;
     tex = SDL_CreateTextureFromSurface(renderer_.get(), backSurface->Get());
     SDL_RenderClear(renderer_.get());

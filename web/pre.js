@@ -3,6 +3,18 @@
 // GitHub Pages per-file limit.
 Module.preRun = Module.preRun || [];
 Module.preRun.push(function () {
+  // Harness settings (see game/harness.h) can come from Module.bbEnv or from
+  // BB_* query parameters.
+  var env = Object.assign({}, Module.bbEnv || {});
+  new URLSearchParams(location.search).forEach(function (v, k) {
+    if (k.indexOf('BB_') === 0) env[k] = v;
+  });
+  Object.keys(env).forEach(function (k) { ENV[k] = String(env[k]); });
+  if (Module.bbInputScript) {
+    FS.writeFile('/input_script.txt', Module.bbInputScript);
+    ENV.BB_INPUT_SCRIPT = '/input_script.txt';
+  }
+
   addRunDependency('game-data');
   FS.mkdir('/data');
   fetch('data/manifest.json')

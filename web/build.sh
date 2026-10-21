@@ -6,11 +6,11 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/web/dist"
 mkdir -p "$OUT/data"
 cd "$ROOT/game"
-em++ -O2 -std=c++14 -w -DPLATFORM_LINUX -fexceptions \
+em++ -O2 -std=c++14 -w -DPLATFORM_LINUX -fexceptions -include rand_compat.h \
   -sUSE_SDL=2 -sUSE_SDL_MIXER=2 -sSDL2_MIXER_FORMATS='["ogg"]' \
   -sASYNCIFY -sASYNCIFY_STACK_SIZE=65536 \
   -sALLOW_MEMORY_GROWTH -sINITIAL_MEMORY=256MB \
-  -sFORCE_FILESYSTEM -sEXPORTED_RUNTIME_METHODS=FS,addRunDependency,removeRunDependency \
+  -sFORCE_FILESYSTEM -sEXPORTED_RUNTIME_METHODS=FS,ENV,addRunDependency,removeRunDependency \
   --pre-js "$ROOT/web/pre.js" \
   ${EXTRA_FLAGS:-} \
   -o "$OUT/blipblop.js" \

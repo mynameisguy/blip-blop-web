@@ -7,8 +7,12 @@ for pixel.
 - `game/` holds the original C++ source and data, imported from
   [benkaraban/blip-blop](https://github.com/benkaraban/blip-blop)
   (`vc-projects/Blip_n_Blop_3`). Browser-only changes sit behind
-  `#ifdef __EMSCRIPTEN__` so the native build is unchanged.
+  `#ifdef __EMSCRIPTEN__`.
 - `web/` holds the browser shell, the data loader and the build script.
+- `tools/` holds the pixel comparison tools.
+
+Both builds use the MSVC `rand()` sequence (`game/rand_compat.h`), so random
+behaviour matches the original Windows release on every platform.
 
 ## Build
 
@@ -20,3 +24,23 @@ python3 -m http.server -d web/dist 8000
 
 `ffmpeg` is needed at build time: two music tracks (`gameover.zik`, `tambour.zik`)
 are MP3 files, and the browser mixer only decodes OGG, so the build re-encodes them.
+
+Every push to `main` builds the game and deploys it to GitHub Pages
+(`.github/workflows/pages.yml`).
+
+## Pixel comparison
+
+`game/harness.cpp` adds an opt-in test mode, driven by environment variables
+(native) or `BB_*` URL parameters (browser): a fixed-step virtual clock,
+scripted key presses and frame dumps. With it, the native and browser builds
+produce frame-for-frame comparable output.
+
+```sh
+# native reference (built with CMake from game/)
+SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy BB_FIXED_STEP_MS=11 \
+  BB_DUMP_DIR=/tmp/native BB_DUMP_EVERY=50 BB_MAX_FRAMES=1500 ./blipblop
+# browser build, served on localhost:8000
+npm i playwright
+node tools/web_dump.mjs http://localhost:8000/ /tmp/web 50 1500
+python3 tools/compare_frames.py /tmp/native /tmp/web /tmp/diff
+```

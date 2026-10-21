@@ -24,6 +24,8 @@
     print: function (t) { console.log(t); },
     printErr: function (t) { console.warn(t); }
   };
+  // Test pages and harness runs can add hooks (e.g. onFrame) before load.
+  if (window.bbHooks) Object.assign(Module, window.bbHooks);
 </script>
 <script async src="blipblop.js"></script>
 </body>

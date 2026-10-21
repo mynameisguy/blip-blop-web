@@ -7,6 +7,9 @@ find_library(SDL2_LIBRARIES SDL2)
 find_library(SDL2MIXER_LIBRARIES SDL2_mixer)
 find_path(SDL2_INCLUDE_DIRS SDL2/SDL.h)
 
+# Same rand() sequence as the original MSVC build, on every platform.
+add_compile_options(-DPLATFORM_LINUX -include ${CMAKE_CURRENT_SOURCE_DIR}/rand_compat.h)
+
 aux_source_directory(. SRC)
 aux_source_directory(Engine ENGINE_SRC)
 aux_source_directory(menus MENUS_SRC)
