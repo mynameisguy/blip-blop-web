@@ -71,6 +71,7 @@ function bbMountSaves() {
           return resolve(false);
         }
         bbSavesMounted = true;
+        bbWatchDb();
         resolve(true);
       });
     } catch (e) {
@@ -82,23 +83,73 @@ function bbMountSaves() {
 
 // Copies saved files over the shipped ones. A file whose size differs from
 // the shipped one is not from this game version, so it is skipped.
+// Anything else stored under a save name (e.g. a directory) is removed, so
+// the next save can write the file.
 function bbRestoreSaves() {
   BB_SAVE_FILES.forEach(function (name) {
+    var path = BB_SAVE_DIR + '/' + name;
+    var stat;
+    try { stat = FS.stat(path); } catch (e) { return; } // not saved yet
     try {
-      var saved = FS.readFile(BB_SAVE_DIR + '/' + name);
-      var shipped = FS.stat('/data/' + name);
-      if (saved.length === shipped.size) FS.writeFile('/data/' + name, saved);
-    } catch (e) { /* not saved yet */ }
+      if (!FS.isFile(stat.mode)) {
+        bbRemoveTree(path);
+        return;
+      }
+      var saved = FS.readFile(path);
+      if (saved.length === FS.stat('/data/' + name).size) FS.writeFile('/data/' + name, saved);
+    } catch (e) {
+      console.warn('Ignoring saved ' + name + ':', e);
+    }
   });
+}
+
+function bbRemoveTree(path) {
+  if (FS.isDir(FS.stat(path).mode)) {
+    FS.readdir(path).forEach(function (n) {
+      if (n !== '.' && n !== '..') bbRemoveTree(path + '/' + n);
+    });
+    FS.rmdir(path);
+  } else {
+    FS.unlink(path);
+  }
+}
+
+// IDBFS keeps its database connection open. If the browser closes it (site
+// data cleared, database deleted), every later sync fails with "The database
+// connection is closing": drop the cached connection and try once more.
+function bbSyncfs(populate, callback, retried) {
+  FS.syncfs(populate, function (err) {
+    if (err && !retried) {
+      var db = IDBFS.dbs[BB_SAVE_DIR];
+      delete IDBFS.dbs[BB_SAVE_DIR];
+      try { if (db) db.close(); } catch (e) { /* already closed */ }
+      return bbSyncfs(populate, callback, true);
+    }
+    callback(err);
+  });
+}
+
+// Lets another tab or the browser delete or upgrade the database instead of
+// being blocked by our open connection; the next save reopens it.
+function bbWatchDb() {
+  var db = IDBFS.dbs[BB_SAVE_DIR];
+  if (!db || db.onversionchange) return;
+  db.onversionchange = function () {
+    db.close();
+    if (IDBFS.dbs[BB_SAVE_DIR] === db) delete IDBFS.dbs[BB_SAVE_DIR];
+  };
 }
 
 function bbSync() {
   if (bbSyncing) { bbSyncAgain = true; return; }
   bbSyncing = true;
-  FS.syncfs(false, function (err) {
+  bbSyncfs(false, function (err) {
     bbSyncing = false;
     if (err) console.warn('Cannot save:', err);
-    else if (Module.onSaved) Module.onSaved();
+    else {
+      bbWatchDb();
+      if (Module.onSaved) Module.onSaved();
+    }
     if (bbSyncAgain) { bbSyncAgain = false; bbSync(); }
   });
 }
@@ -108,8 +159,13 @@ Module.bbPersistSave = function (path) {
   if (!bbSavesMounted) return;
   var name = path.split('/').pop();
   if (BB_SAVE_FILES.indexOf(name) < 0) return;
+  var path = BB_SAVE_DIR + '/' + name;
   try {
-    FS.writeFile(BB_SAVE_DIR + '/' + name, FS.readFile('/data/' + name));
+    var data = FS.readFile('/data/' + name);
+    try { FS.writeFile(path, data); } catch (e) {
+      bbRemoveTree(path); // something else under that name: replace it
+      FS.writeFile(path, data);
+    }
   } catch (e) {
     console.warn('Cannot save ' + name + ':', e);
     return;

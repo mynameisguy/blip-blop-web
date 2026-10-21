@@ -77,6 +77,13 @@ bool Input::open(int flags)
 
 	SDL_JoystickEventState(SDL_TRUE);
 
+#ifdef __EMSCRIPTEN__
+	// Pads can also arrive later (see webEvent()); browser pad names are
+	// often longer than js[].name.
+	this->n_joy = 0;
+	for (int i = 0; i < SDL_NumJoysticks(); i++)
+		webAddJoystick(i);
+#else
 	this->n_joy = SDL_NumJoysticks();
 
 	for (int i = 0; i < n_joy; i++)
@@ -87,6 +94,7 @@ bool Input::open(int flags)
 		memset(this->js[i].buttons, 0, sizeof(this->js[i].buttons));
 		memset(&this->js[i].directions, 0, sizeof(this->js[i].directions));
 	}
+#endif
 
 	/*if (dinput != NULL) {
 		debug << "Input::open->DINPUT déjà initialisé!\n";
@@ -189,10 +197,116 @@ bool Input::open(int flags)
 // Desc: Met à jour les entrées
 //-----------------------------------------------------------------------------
 
+#ifdef __EMSCRIPTEN__
+// Slot in js[] of the open joystick with this SDL instance id, or -1.
+int Input::webJoystickSlot(SDL_JoystickID id) const
+{
+	for (int k = 0; k < MAX_JOY; k++)
+		if (js[k].handle != NULL && SDL_JoystickInstanceID(js[k].handle) == id)
+			return k;
+	return -1;
+}
+
+// Opens joystick device 'device' into the first free slot. Slots never move,
+// since key bindings store the slot number.
+void Input::webAddJoystick(int device)
+{
+	SDL_Joystick * j = SDL_JoystickOpen(device);
+	if (j == NULL)
+		return;
+
+	if (webJoystickSlot(SDL_JoystickInstanceID(j)) >= 0) {
+		SDL_JoystickClose(j);		// already open: drop the extra reference
+		return;
+	}
+
+	int k = 0;
+	while (k < MAX_JOY && js[k].handle != NULL)
+		k++;
+	if (k == MAX_JOY) {
+		SDL_JoystickClose(j);
+		return;
+	}
+
+	const char * name = SDL_JoystickName(j);
+	memset(&js[k], 0, sizeof(js[k]));
+	js[k].handle = j;
+	strncpy(js[k].name, name ? name : "", sizeof(js[k].name) - 1);
+	if (k >= n_joy)
+		n_joy = k + 1;
+	debug << "Joystick " << (k + 1) << " connected: " << js[k].name << "\n";
+}
+
+// Browser-only event handling before update() sees an event. Returns false
+// when update() must skip the event.
+bool Input::webEvent(SDL_Event & e)
+{
+	int k;
+
+	switch (e.type) {
+		case SDL_WINDOWEVENT:
+			// On focus loss SDL releases held keys through its default US
+			// keymap, so on another layout (e.g. AZERTY) the release names
+			// another key than the press did and the game's key stays down.
+			// SDL then drops the real release too. Forget every key instead.
+			if (e.window.event == SDL_WINDOWEVENT_FOCUS_LOST) {
+				memset(buffer, 0, sizeof(buffer));
+				memset(specialsbuffer, 0, sizeof(specialsbuffer));
+			}
+			return true;
+
+		// A browser only shows a pad to the page once a button is pressed on
+		// it, usually after the game has started, so pads come and go.
+		case SDL_JOYDEVICEADDED:
+			webAddJoystick(e.jdevice.which);
+			return false;
+
+		case SDL_JOYDEVICEREMOVED:
+			k = webJoystickSlot(e.jdevice.which);
+			if (k >= 0) {
+				SDL_JoystickClose(js[k].handle);
+				memset(&js[k], 0, sizeof(js[k]));
+				while (n_joy > 0 && js[n_joy - 1].handle == NULL)
+					n_joy--;
+				debug << "Joystick " << (k + 1) << " disconnected\n";
+			}
+			return false;
+
+		// update() indexes js[] with the event's joystick: use its slot.
+		case SDL_JOYBUTTONDOWN:
+		case SDL_JOYBUTTONUP:
+			k = webJoystickSlot(e.jbutton.which);
+			if (k < 0 || e.jbutton.button >= sizeof(js[k].buttons))
+				return false;
+			e.jbutton.which = k;
+			return true;
+
+		case SDL_JOYHATMOTION:
+			k = webJoystickSlot(e.jhat.which);
+			if (k < 0)
+				return false;
+			e.jhat.which = k;
+			return true;
+
+		case SDL_JOYAXISMOTION:
+			k = webJoystickSlot(e.jaxis.which);
+			if (k < 0)
+				return false;
+			e.jaxis.which = k;
+			return true;
+	}
+	return true;
+}
+#endif
+
 void Input::update()
 {
 	SDL_Event e;
 	while (SDL_PollEvent(&e)){
+#ifdef __EMSCRIPTEN__
+		if (!webEvent(e))
+			continue;
+#endif
 
 		if (e.type == SDL_QUIT)
 		{
@@ -612,6 +726,12 @@ int Input::scanKey(unsigned int k) const
 		*/
 		int	j = k >> 10 & 0xFF;
 		int b = k & 0xFF;
+
+#ifdef __EMSCRIPTEN__
+		// A binding read from a saved config may name any joystick.
+		if (j > MAX_JOY || b >= (int)sizeof(js[0].buttons))
+			return 0;
+#endif
 
 		if (b == JOY_UP)
 			return js[j - 1].directions.up;

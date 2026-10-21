@@ -53,9 +53,10 @@ the save code at the end of `main()`, so the browser build saves each file as
 soon as it changes (options menu, keys menu, hi-score entry) and again when
 the page is hidden. Add `BB_NO_PERSIST=1` to run with the shipped files only.
 
-Both tests drive the game with real browser key events:
+Both tests drive the game with real browser key events, waiting on what the
+game shows rather than on fixed delays (helpers in `tools/game_driver.mjs`):
 
 ```sh
-node tools/input_test.mjs http://localhost:8000/   # menus, both players, keys the page must not act on, gamepad, AZERTY
-node tools/saves_test.mjs http://localhost:8000/   # settings and hi-scores survive a reload
+node tools/input_test.mjs http://localhost:8000/   # both players, focus loss, keys the page must not act on, AZERTY, gamepad
+node tools/saves_test.mjs http://localhost:8000/   # settings and hi-scores survive a reload; damaged storage
 ```

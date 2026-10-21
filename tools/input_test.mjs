@@ -1,187 +1,56 @@
 // Drives the browser build with real keyboard events (page.keyboard, not the
 // harness input script) and checks that input behaves like the native game:
-//   1. keyboard: through the menus into level 1, the player walks right
-//      (the level scrolls), stops when the key is released (no stuck keys
-//      after auto-repeat), walks left and jumps; the page does not act on
-//      game keys (scrolling, Backspace, quick find).
+//   1. keyboard: through the menus into level 1, the player walks right,
+//      stops when the key is released (no stuck keys after auto-repeat) or
+//      when the window loses focus mid-walk, walks left and jumps; the page
+//      does not act on game keys (scrolling, Backspace, quick find).
 //   2. player 2: in a two player game, the default P2 keys move Blop only.
-//   3. gamepad: with a simulated Gamepad API pad, the keys menu binds a pad
-//      button to "P1 UP", the same code native SDL gives (JOY1 BUTTON0);
-//      an AZERTY key binds by its layout letter, as native SDL does.
+//   3. AZERTY: the physical Q key binds as "a" (the layout's key, as native
+//      SDL gives), walks the player, and is released when the window loses
+//      focus while it is held.
+//   4. gamepad: a pad that appears after load (as browsers only show a pad
+//      once a button is pressed) binds in the keys menu (JOY1 BUTTON0 =
+//      0x400, JOY1 RIGHT = 0x467, the native codes) and its stick walks the
+//      player in a level; unplugging it is harmless.
+//
+// Every step waits on the game's state (read from each frame through
+// Module.onFrame) and retries a key press the game missed, so it does not
+// depend on timing.
 //
 //   node tools/input_test.mjs <url> [outDir]
 // Exits 0 when every check passes. Needs playwright (CHROMIUM_PATH optional).
-import { chromium } from 'playwright';
-import fs from 'node:fs';
+import {
+  setup, check, finish, scenario, screenshot, sleep, newGamePage, hold, holdRepeating, grab, scroll, walked,
+  fmt, blurWindow, toMainMenu, startGame, toKeysMenu, keysMenuToStart, menuKey, bind, P1_UP, P1_RIGHT,
+} from './game_driver.mjs';
 
 const [,, url = 'http://localhost:8000/', outDir] = process.argv;
-if (outDir) fs.mkdirSync(outDir, { recursive: true });
+await setup(url, outDir);
 
-const sleep = ms => new Promise(r => setTimeout(r, ms));
-let failures = 0;
-function check(ok, what, detail = '') {
-  console.log(`${ok ? 'PASS' : 'FAIL'} ${what}${detail ? ' - ' + detail : ''}`);
-  if (!ok) failures++;
-}
-
-const browser = await chromium.launch({
-  executablePath: process.env.CHROMIUM_PATH || undefined,
-  args: ['--autoplay-policy=no-user-gesture-required'],
-});
-
-// Every frame goes through Module.onFrame (game/harness.cpp). The page keeps
-// a frame count and, on request, the next frame's pixels (RGBA, 640x480).
-function hooks() {
-  window.bbFrames = 0;
-  window.bbGrab = null;
-  window.bbHooks = {
-    bbEnv: { BB_NO_PERSIST: 1 },
-    onFrame(n, bytes, pitch, h) {
-      window.bbFrames++;
-      if (window.bbGrab) {
-        const g = window.bbGrab;
-        window.bbGrab = null;
-        g({ pixels: bytes.slice(), pitch, h });
-      }
-    },
-  };
-}
-
-async function newGamePage(initScripts = []) {
-  const context = await browser.newContext({ viewport: { width: 800, height: 600 } });
-  const page = await context.newPage();
-  const errors = [];
-  page.on('pageerror', e => errors.push(e.message));
-  page.on('console', m => {
-    // A missing favicon is reported as a console error; failed game
-    // requests are caught below with their URL.
-    if (m.type() === 'error' && !m.text().startsWith('Failed to load resource')) errors.push(m.text());
-  });
-  page.on('response', r => {
-    if (r.status() >= 400 && !r.url().endsWith('/favicon.ico')) errors.push(`${r.status()} ${r.url()}`);
-  });
-  await page.addInitScript(hooks);
-  for (const s of initScripts) await page.addInitScript(s);
-  await page.goto(url);
-  await page.waitForFunction(() => window.bbFrames > 20, null, { timeout: 60000 });
-  return { context, page, errors };
-}
-
-async function hold(page, key, ms = 150) {
-  await page.keyboard.down(key);
-  await sleep(ms);
-  await page.keyboard.up(key);
-}
-
-// Holds a key while sending auto-repeat keydowns, as a real keyboard does.
-async function holdRepeating(page, key, ms) {
-  await page.keyboard.down(key);
-  const end = Date.now() + ms;
-  await sleep(Math.min(250, ms));
-  while (Date.now() < end) {
-    await page.keyboard.down(key); // repeat: true
-    await sleep(33);
-  }
-  await page.keyboard.up(key);
-}
-
-// Grabs the next frame and reduces it in the page:
-//  - ground: mean brightness of each column over the playfield rows, used to
-//    measure how far the level scrolled;
-//  - player: centroid of Blip's saturated blue pixels;
-//  - blop: centroid of Blop's salmon red pixels near the ground, away from
-//    Blip (whose bandana is red too).
-async function grab(page, name) {
-  const r = await page.evaluate(() => new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('no frame within 10 s')), 10000);
-    window.bbGrab = ({ pixels, pitch }) => {
-      clearTimeout(timer);
-      const px = (x, y) => { const i = y * pitch + x * 4; return [pixels[i], pixels[i + 1], pixels[i + 2]]; };
-      const ground = new Array(640).fill(0);
-      let n = 0, sx = 0, sy = 0;
-      for (let y = 0; y < 480; y++) {
-        for (let x = 0; x < 640; x++) {
-          const [r, g, b] = px(x, y);
-          if (y >= 300 && y < 470) ground[x] += (r + g + b) / 3;
-          // Blip's body; the HUD (y < 80) also has blue digits.
-          if (y >= 80 && b > 150 && b > r + 100 && b > g + 70) { n++; sx += x; sy += y; }
-        }
-      }
-      const blipX = n ? sx / n : -1000;
-      let rn = 0, rx = 0;
-      for (let y = 300; y < 480; y++) {
-        for (let x = 0; x < 640; x++) {
-          if (Math.abs(x - blipX) < 35) continue;
-          const [r, g, b] = px(x, y);
-          if (r > 190 && g >= 40 && g < 130 && b >= 30 && b < 120 && r - g > 90) { rn++; rx += x; }
-        }
-      }
-      resolve({ ground: ground.map(v => v / 170), player: n ? { n, x: blipX, y: sy / n } : null,
-                blop: rn ? { n: rn, x: rx / rn } : null });
-    };
-  }));
-  if (outDir && name) await page.locator('canvas').screenshot({ path: `${outDir}/${name}.png` });
-  return r;
-}
-
-// Horizontal scroll from frame a to frame b, in pixels (positive: the view
-// moved right, so the scenery moved left on screen).
-function scroll(a, b) {
-  let best = 0, bestErr = Infinity;
-  for (let s = -160; s <= 160; s++) {
-    let err = 0, n = 0;
-    for (let x = 160; x < 480; x++) { err += Math.abs(a.ground[x] - b.ground[x - s]); n++; }
-    err /= n;
-    if (err < bestErr) { bestErr = err; best = s; }
-  }
-  return best;
-}
-
-// Skips the intro and starts a one player game with Blip, up to "press a key".
-async function startGame(page) {
-  await hold(page, 'Escape');           // skip the intro cinematic
-  await sleep(1000);
-  await hold(page, 'Enter');            // START GAME
-  await sleep(600);
-  await hold(page, 'Enter');            // START 1 PLAYER GAME
-  await sleep(600);
-  await hold(page, 'Enter');            // select BLIP
-  await sleep(3000);                    // mission briefing, loading
-  await hold(page, 'Enter');            // PRESS A KEY TO START
-  await sleep(3000);
-}
-
-// --- 1. keyboard -----------------------------------------------------------
-{
+// --- 1. keyboard -------------------------------------------------------------
+await scenario('keyboard', async () => {
   const { context, page, errors } = await newGamePage();
+  await toMainMenu(page);
   await startGame(page);
 
   const a = await grab(page, 'kb-1-start');
   await sleep(800);
   const a2 = await grab(page);
-  check(scroll(a, a2) === 0, 'no movement without input', `scroll ${scroll(a, a2)}`);
   check(!!a2.player, 'player found on screen', JSON.stringify(a2.player));
+  check(Math.abs(walked(a, a2)) < 3, 'no movement without input', `moved ${fmt(walked(a, a2))}px`);
 
   await holdRepeating(page, 'ArrowRight', 1500);
   const b = await grab(page, 'kb-2-after-right');
-  // The view follows once the player passes the middle of the screen, so
-  // count both the scroll and the player's move on screen.
-  const sr = scroll(a2, b);
-  const walked = sr + (b.player && a2.player ? b.player.x - a2.player.x : NaN);
-  check(walked >= 60, 'holding Right (with auto-repeat) walks right',
-    `scroll ${sr}px, player x ${a2.player?.x.toFixed(1)} -> ${b.player?.x.toFixed(1)}`);
+  check(walked(a2, b) >= 60, 'holding Right (with auto-repeat) walks right', `walked ${fmt(walked(a2, b))}px`);
 
   await sleep(800);
   const b2 = await grab(page);
-  check(scroll(b, b2) === 0 && Math.abs(b2.player.x - b.player.x) < 3,
-    'player stops when Right is released (no stuck key)',
-    `scroll ${scroll(b, b2)}, player x ${b.player.x.toFixed(1)} -> ${b2.player.x.toFixed(1)}`);
+  check(Math.abs(walked(b, b2)) < 3, 'player stops when Right is released (no stuck key)', `moved ${fmt(walked(b, b2))}px`);
 
   await hold(page, 'ArrowLeft', 500);
   await sleep(300);
   const c = await grab(page, 'kb-3-after-left');
-  const dx = c.player && b2.player ? c.player.x - b2.player.x : NaN;
-  check(dx <= -10, 'holding Left walks left', `player x ${b2.player?.x.toFixed(1)} -> ${c.player?.x.toFixed(1)}`);
+  check(walked(b2, c) <= -10, 'holding Left walks left', `walked ${fmt(walked(b2, c))}px`);
 
   await sleep(500);
   const d0 = await grab(page);
@@ -190,7 +59,21 @@ async function startGame(page) {
   const d1 = await grab(page, 'kb-4-jump');
   await page.keyboard.up('Space');
   const dy = d1.player && d0.player ? d1.player.y - d0.player.y : NaN;
-  check(dy <= -10, 'Space jumps', `player y ${d0.player?.y.toFixed(1)} -> ${d1.player?.y.toFixed(1)}`);
+  check(dy <= -10, 'Space jumps', `player y ${fmt(d0.player?.y)} -> ${fmt(d1.player?.y)}`);
+
+  // Focus lost while a key is held: the key must not stay down.
+  await sleep(800);
+  await page.keyboard.down('ArrowRight');
+  await sleep(400);
+  const e0 = await grab(page);
+  await blurWindow(page);
+  await sleep(300);
+  const e1 = await grab(page);
+  await sleep(1000);
+  const e2 = await grab(page, 'kb-5-after-blur');
+  await page.keyboard.up('ArrowRight');
+  check(Math.abs(walked(e1, e2)) < 3, 'player stops when the window loses focus while Right is held',
+    `moved ${fmt(walked(e1, e2))}px in the second after the blur (${fmt(walked(e0, e1))}px around it)`);
 
   // The page must not act on game keys.
   await page.evaluate(() => {
@@ -209,27 +92,17 @@ async function startGame(page) {
     notPrevented.length ? 'not prevented: ' + notPrevented.join(' ') : `${prevented.length} keys`);
   const scrollY = await page.evaluate(() => window.scrollY);
   check(scrollY === 0, 'page did not scroll', `scrollY ${scrollY}`);
-  check(page.url() === url || page.url().startsWith(url), 'page did not navigate', page.url());
+  check(page.url().startsWith(url), 'page did not navigate', page.url());
 
   check(errors.length === 0, 'no page errors without a gamepad', errors.join(' | '));
   await context.close();
-}
+});
 
-// --- 2. player 2 default keys ----------------------------------------------
-{
+// --- 2. player 2 default keys ------------------------------------------------
+await scenario('player 2', async () => {
   const { context, page, errors } = await newGamePage();
-  await hold(page, 'Escape');
-  await sleep(1000);
-  await hold(page, 'Enter');            // START GAME
-  await sleep(600);
-  await hold(page, 'ArrowDown');        // START 2 PLAYERS GAME
-  await sleep(300);
-  await hold(page, 'Enter');
-  await sleep(600);
-  await hold(page, 'Enter');            // player 1 is BLIP, so player 2 is Blop
-  await sleep(3000);
-  await hold(page, 'Enter');            // PRESS A KEY TO START
-  await sleep(3000);
+  await toMainMenu(page);
+  await startGame(page, 2);
 
   const a = await grab(page, 'p2-1-start');
   check(!!a.player && !!a.blop, 'both players found on screen', JSON.stringify({ blip: a.player, blop: a.blop }));
@@ -238,84 +111,125 @@ async function startGame(page) {
   const b = await grab(page, 'p2-2-after-f');
   const blopDx = b.blop && a.blop ? b.blop.x - a.blop.x + scroll(a, b) : NaN;
   const blipDx = b.player && a.player ? b.player.x - a.player.x + scroll(a, b) : NaN;
-  check(blopDx >= 30, 'F walks player 2 right', `Blop moved ${blopDx.toFixed(1)}px`);
-  check(Math.abs(blipDx) < 5, 'F does not move player 1', `Blip moved ${blipDx.toFixed(1)}px`);
+  check(blopDx >= 30, 'F walks player 2 right', `Blop moved ${fmt(blopDx)}px`);
+  check(Math.abs(blipDx) < 5, 'F does not move player 1', `Blip moved ${fmt(blipDx)}px`);
   await hold(page, 'd', 500);           // P2 left
   await sleep(300);
   const c = await grab(page, 'p2-3-after-d');
   const blopDx2 = c.blop && b.blop ? c.blop.x - b.blop.x + scroll(b, c) : NaN;
-  check(blopDx2 <= -15, 'D walks player 2 left', `Blop moved ${blopDx2.toFixed(1)}px`);
+  check(blopDx2 <= -15, 'D walks player 2 left', `Blop moved ${fmt(blopDx2)}px`);
   check(errors.length === 0, 'no page errors in a two player game', errors.join(' | '));
   await context.close();
-}
+});
 
-// --- 3. gamepad ------------------------------------------------------------
-{
-  // A standard-mapping pad present before load, so SDL opens it at start
-  // like a pad plugged in before launching the native game.
+// --- 3. AZERTY ---------------------------------------------------------------
+await scenario('AZERTY', async () => {
+  const { context, page, errors } = await newGamePage();
+  // Playwright's keyboard is QWERTY only, so send AZERTY events through CDP:
+  // the key in the QWERTY "Q" position types "a".
+  const cdp = await context.newCDPSession(page);
+  const azertyA = { code: 'KeyQ', key: 'a', windowsVirtualKeyCode: 65, nativeVirtualKeyCode: 65 };
+  const down = () => cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', text: 'a', ...azertyA });
+  const up = () => cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', ...azertyA });
+
+  await toMainMenu(page);
+  await toKeysMenu(page);
+  for (let i = 0; i < 3; i++) await menuKey(page, 'ArrowDown', 'RIGHT');
+  const code = await bind(page, P1_RIGHT, async () => { await down(); await sleep(150); await up(); },
+    'a'.charCodeAt(0), 'RIGHT');
+  await screenshot(page, 'az-1-keys-menu');
+  check(code === 'a'.charCodeAt(0), 'AZERTY: physical Q key binds as "a" (layout key, like native SDL)', '0x' + code.toString(16));
+  await keysMenuToStart(page, 3);
+  await startGame(page);
+
+  const a = await grab(page);
+  await down();
+  await sleep(600);
+  const b = await grab(page);
+  check(walked(a, b) >= 30, 'AZERTY: holding physical Q ("a" = P1 RIGHT) walks right', `walked ${fmt(walked(a, b))}px`);
+  await blurWindow(page);
+  await sleep(300);
+  const c = await grab(page);
+  await sleep(1000);
+  const d = await grab(page, 'az-2-after-blur');
+  check(Math.abs(walked(c, d)) < 3, 'AZERTY: player stops when the window loses focus while "a" is held',
+    `moved ${fmt(walked(c, d))}px in the second after the blur`);
+  await up();                           // the real release, after the blur
+  await sleep(300);
+  const e = await grab(page);
+  await down();
+  await sleep(600);
+  await up();
+  await sleep(200);
+  const f = await grab(page);
+  check(walked(e, f) >= 30, 'AZERTY: the key works again after the blur', `walked ${fmt(walked(e, f))}px`);
+  check(errors.length === 0, 'no page errors (AZERTY)', errors.join(' | '));
+  await context.close();
+});
+
+// --- 4. gamepad --------------------------------------------------------------
+await scenario('gamepad', async () => {
+  // A standard-mapping pad the page cannot see until bbPadConnect(), as a
+  // browser only shows a pad once a button is pressed after load.
   const fakePad = () => {
     const pad = {
-      id: 'Simulated pad (STANDARD GAMEPAD)', index: 0, connected: true, mapping: 'standard',
-      timestamp: 1, axes: [0, 0, 0, 0],
+      id: 'Simulated pad (STANDARD GAMEPAD Vendor: 045e Product: 028e with a long browser name)',
+      index: 0, connected: true, mapping: 'standard', timestamp: 1, axes: [0, 0, 0, 0],
       buttons: Array.from({ length: 17 }, () => ({ pressed: false, touched: false, value: 0 })),
     };
-    navigator.getGamepads = () => [pad, null, null, null];
-    window.bbPad = pad;
+    let visible = false;
+    navigator.getGamepads = () => [visible ? pad : null, null, null, null];
+    const send = type => { const e = new Event(type); e.gamepad = pad; window.dispatchEvent(e); };
+    window.bbPadConnect = () => { visible = true; pad.connected = true; send('gamepadconnected'); };
+    window.bbPadDisconnect = () => { visible = false; pad.connected = false; send('gamepaddisconnected'); };
     window.bbPadButton = (i, down) => {
       pad.buttons[i] = { pressed: down, touched: down, value: down ? 1 : 0 };
       pad.timestamp++;
     };
+    window.bbPadAxis = (i, v) => { pad.axes[i] = v; pad.timestamp++; };
   };
-  const { context, page, errors } = await newGamePage([fakePad]);
-  await hold(page, 'Escape');
-  await sleep(1000);
-  await hold(page, 'ArrowDown');         // OPTIONS
-  await sleep(300);
-  await hold(page, 'Enter');
-  await sleep(500);
-  await hold(page, 'ArrowDown');         // FULLSCREEN
-  await sleep(300);
-  await hold(page, 'ArrowDown');         // P1 KEYS
-  await sleep(300);
-  await hold(page, 'Enter');
-  await sleep(500);
-  await hold(page, 'Enter');             // edit UP: "UP = ..."
-  await sleep(500);
-  await page.evaluate(() => window.bbPadButton(0, true));
-  await sleep(200);
-  await page.evaluate(() => window.bbPadButton(0, false));
-  await sleep(500);
-  if (outDir) await page.locator('canvas').screenshot({ path: `${outDir}/pad-keys-menu.png` });
-  // The keys menu writes data/bb.cfg on every change (browser build).
-  const alias = await page.evaluate(() => {
-    const d = Module.FS.readFile('/data/bb.cfg');
-    return new DataView(d.buffer, d.byteOffset).getUint32(6, true); // P1 UP
-  });
-  check(alias === (1 << 10) + 0, 'pad button binds as JOY1 BUTTON0 (native code 0x400)', '0x' + alias.toString(16));
+  const { context, page, errors } = await newGamePage({ initScripts: [fakePad] });
+  await page.evaluate(() => window.bbPadConnect());
+  await toMainMenu(page);
+  await toKeysMenu(page);
 
-  // AZERTY: the key in the QWERTY "Q" position types "a". Native SDL gives
-  // the layout's key (SDLK_a) and so must the browser; Playwright's keyboard
-  // is QWERTY only, so send the event through CDP.
-  await hold(page, 'ArrowDown');         // DOWN
-  await sleep(300);
-  await hold(page, 'Enter');             // edit DOWN
+  const button = await bind(page, P1_UP, async () => {
+    await page.evaluate(() => window.bbPadButton(0, true));
+    await sleep(150);
+    await page.evaluate(() => window.bbPadButton(0, false));
+  }, 0x400, 'UP');
+  check(button === 0x400, 'pad connected after load: button 0 binds as JOY1 BUTTON0 (0x400)', '0x' + button.toString(16));
+
+  for (let i = 0; i < 3; i++) await menuKey(page, 'ArrowDown', 'RIGHT');
+  const right = await bind(page, P1_RIGHT, async () => {
+    await page.evaluate(() => window.bbPadAxis(0, 1));
+    await sleep(150);
+    await page.evaluate(() => window.bbPadAxis(0, 0));
+  }, 0x400 + 103, 'RIGHT');
+  await screenshot(page, 'pad-1-keys-menu');
+  check(right === 0x467, 'stick right binds as JOY1 RIGHT (0x467)', '0x' + right.toString(16));
+
+  await keysMenuToStart(page, 3);
+  await startGame(page);
+  const a = await grab(page);
+  await page.evaluate(() => window.bbPadAxis(0, 1));
+  await sleep(1200);
+  const b = await grab(page, 'pad-2-after-stick');
+  await page.evaluate(() => window.bbPadAxis(0, 0));
+  check(walked(a, b) >= 60, 'pushing the stick right walks the player right', `walked ${fmt(walked(a, b))}px`);
   await sleep(500);
-  const cdp = await page.context().newCDPSession(page);
-  const azertyA = { code: 'KeyQ', key: 'a', windowsVirtualKeyCode: 65, nativeVirtualKeyCode: 65 };
-  await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', text: 'a', ...azertyA });
-  await sleep(150);
-  await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', ...azertyA });
-  await sleep(500);
-  if (outDir) await page.locator('canvas').screenshot({ path: `${outDir}/pad-azerty-keys-menu.png` });
-  const down = await page.evaluate(() => {
-    const d = Module.FS.readFile('/data/bb.cfg');
-    return new DataView(d.buffer, d.byteOffset).getUint32(10, true); // P1 DOWN
-  });
-  check(down === 'a'.charCodeAt(0), 'AZERTY: physical Q key binds as "a" (layout key, like native SDL)', '0x' + down.toString(16));
+  const c = await grab(page);
+  await sleep(600);
+  const d = await grab(page);
+  check(Math.abs(walked(c, d)) < 3, 'player stops when the stick is released', `moved ${fmt(walked(c, d))}px`);
+
+  await page.evaluate(() => window.bbPadDisconnect());
+  const f0 = await page.evaluate(() => window.bbFrames);
+  await sleep(1000);
+  const f1 = await page.evaluate(() => window.bbFrames);
+  check(f1 - f0 > 20, 'the game keeps running after the pad is unplugged', `${f1 - f0} frames in 1 s`);
   check(errors.length === 0, 'no page errors with a gamepad', errors.join(' | '));
   await context.close();
-}
+});
 
-await Promise.race([browser.close(), sleep(5000)]);
-console.log(failures ? `${failures} check(s) failed` : 'all checks passed');
-process.exit(failures ? 1 : 0);
+await finish();

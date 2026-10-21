@@ -219,6 +219,13 @@ public:
 	void	close();
 	bool	anyKeyPressed();
 	bool	reAcquire();
+
+#ifdef __EMSCRIPTEN__
+private:
+	int		webJoystickSlot(SDL_JoystickID id) const;
+	void	webAddJoystick(int device);
+	bool	webEvent(SDL_Event & e);
+#endif
 };
 
 //-----------------------------------------------------------------------------
