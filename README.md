@@ -57,8 +57,9 @@ read those too), with the arrows as a fallback, and Return/Escape.
 content hash, so after a deploy a browser never mixes cached old and new files.
 
 - `tools/check_scaling.mjs <url> --fullscreen` compares whole screenshots at
-  800x600, 1366x768 and 1920x1080 with the harness framebuffer: the frame
-  scaled NxN, centred, uncropped, every other pixel black (`--dpr 1,2,3`
+  800x600, 1366x768 and 1920x1080 with the harness framebuffer (frame 400,
+  whose picture reaches all four edges): the frame scaled NxN, centred,
+  uncropped, every other pixel black (`--dpr 1,2,3`
   adds device pixel ratios, `--css` injects CSS to see it fail). `--touch`
   runs as a phone: upright, the picture must fill the width at the top.
 - `tools/check_shell.mjs <url>` checks loading, the start gesture, audio,

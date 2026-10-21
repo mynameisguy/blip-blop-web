@@ -19,7 +19,9 @@
 // tools/check_touch_layout.mjs checks they stay off the picture.
 //
 //   node tools/check_scaling.mjs <url> [options]
-//     --frame N          frame to compare (default 600)
+//     --frame N          frame to compare (default 400: an intro frame whose
+//                        picture reaches all four edges, so a picture that
+//                        is cropped or clipped anywhere cannot match)
 //     --sizes WxH,...    window sizes (default 800x600,1366x768,1920x1080);
 //                        WxH@R also sets that size's device pixel ratio
 //     --dpr a,b          device pixel ratios (default 1)
@@ -45,7 +47,7 @@ function opt(name, def) {
   const i = args.indexOf('--' + name);
   return i >= 0 ? args[i + 1] : def;
 }
-const frame = +opt('frame', 600);
+const frame = +opt('frame', 400);
 const touch = args.includes('--touch');
 const sizeSpecs = opt('sizes', touch ? '390x844@3,360x740@4,412x915@2.625,844x390@3' : '800x600,1366x768,1920x1080')
   .split(',').map(s => { const [wh, r] = s.split('@'); return [...wh.split('x').map(Number), r ? +r : null]; });
@@ -202,7 +204,19 @@ let reference = null;
     const fb = Buffer.from(await page.evaluate(() => window.__bbFrame), 'base64');
     const colours = new Set();
     for (let i = 0; i < fb.length; i += 3) colours.add(fb[i] << 16 | fb[i + 1] << 8 | fb[i + 2]);
-    if (!reference) console.log(`frame ${frame}: ${colours.size} distinct colours`);
+    // Only a frame with content on every edge shows a clipped edge.
+    const edges = { left: 0, right: 0, top: 0, bottom: 0 };
+    const lit = (x, y) => fb[(y * 640 + x) * 3] | fb[(y * 640 + x) * 3 + 1] | fb[(y * 640 + x) * 3 + 2];
+    for (let y = 0; y < 480; y++) { if (lit(0, y)) edges.left++; if (lit(639, y)) edges.right++; }
+    for (let x = 0; x < 640; x++) { if (lit(x, 0)) edges.top++; if (lit(x, 479)) edges.bottom++; }
+    const dark = Object.keys(edges).filter(k => !edges[k]);
+    if (!reference) console.log(`frame ${frame}: ${colours.size} distinct colours; non-black pixels on the edges: ` +
+      `left ${edges.left}/480, right ${edges.right}/480, top ${edges.top}/640, bottom ${edges.bottom}/640`);
+    if (dark.length) {
+      console.log(`FAIL frame ${frame} is black along the ${dark.join(', ')} edge(s), so cropping there would ` +
+                  'go unseen; pick a --frame whose picture reaches every edge');
+      process.exit(1);
+    }
     if (!reference) reference = fb;
     else if (!reference.equals(fb)) {
       console.log(`  note: frame ${frame} differs between runs (harness not deterministic?)`);
@@ -287,6 +301,21 @@ let reference = null;
         problems.push(`picture differs too much from the frame (mean difference ${r.mad.toFixed(1)})`);
       }
       if (r.margin) problems.push(`${r.margin} margin pixels are not black`);
+      // The frame reaches every edge, so the lit part of the screen must be
+      // exactly the picture rectangle: nothing cropped, clipped or moved.
+      if (scBox && (scBox.x0 !== cx || scBox.y0 !== cy || scBox.x1 !== cx + pw - 1 || scBox.y1 !== cy + ph - 1))
+        problems.push(`lit area (${scBox.x0},${scBox.y0})-(${scBox.x1},${scBox.y1}), expected the whole picture ` +
+                      `(${cx},${cy})-(${cx + pw - 1},${cy + ph - 1})`);
+      // And the element showing the picture must have that rectangle.
+      const el = await page.evaluate(() => {
+        const v = document.getElementById('view');
+        const e = v && !v.hidden ? v : document.getElementById('canvas');
+        const b = e.getBoundingClientRect();
+        return { id: e.id, r: [b.left, b.top, b.width, b.height].map(x => x * devicePixelRatio) };
+      });
+      if ([cx, cy, pw, ph].some((v, i) => Math.abs(el.r[i] - v) > 1))
+        problems.push(`#${el.id} rectangle is (${el.r.map(v => +v.toFixed(1))}) device px, ` +
+                      `expected (${cx},${cy},${pw},${ph})`);
       if (r.first && problems.length) problems.push('first difference: ' + r.first);
       if (errors.length) problems.push('page errors: ' + errors.join('; '));
 
