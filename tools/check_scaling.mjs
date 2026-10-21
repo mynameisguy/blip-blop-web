@@ -8,17 +8,25 @@
 // When even 1x does not fit, the page must scale down to fit instead: then
 // the picture must be the whole frame, centred, 4:3, fully on screen, close
 // to the frame (smooth scaling cannot be exact), and the margins black.
+// With --touch the page runs as on a phone (touch, mobile). Upright, the
+// picture must then fill the screen width at the top (4:3, the owner's
+// choice), even at a non-integer scale: it is checked like the scaled-down
+// case (whole frame, at the top, full width, close to the frame, margins
+// black). Lying down, phones keep the exact whole-number scale above.
 // The toolbar is hidden for the screenshot (it fades out on its own once the
 // mouse is still, but timers are held while the frame is frozen). Touch
-// controls are not shown here: tools/check_touch.mjs checks they stay off
-// the picture.
+// controls and the rotate hint are hidden for the shot too:
+// tools/check_touch_layout.mjs checks they stay off the picture.
 //
 //   node tools/check_scaling.mjs <url> [options]
 //     --frame N          frame to compare (default 600)
-//     --sizes WxH,...    window sizes (default 800x600,1366x768,1920x1080)
+//     --sizes WxH,...    window sizes (default 800x600,1366x768,1920x1080);
+//                        WxH@R also sets that size's device pixel ratio
 //     --dpr a,b          device pixel ratios (default 1)
 //     --fullscreen       also check in fullscreen (Fullscreen button), on a
 //                        1920x1080 screen so the scale changes when it can
+//     --touch            phone/tablet: touch and mobile (default sizes
+//                        390x844@3,360x740@4,412x915@2.625,844x390@3)
 //     --css RULES        extra CSS for the page (to see that the check fails)
 //     --out DIR          save screenshots and failing crops here
 //
@@ -38,8 +46,13 @@ function opt(name, def) {
   return i >= 0 ? args[i + 1] : def;
 }
 const frame = +opt('frame', 600);
-const sizes = opt('sizes', '800x600,1366x768,1920x1080').split(',').map(s => s.split('x').map(Number));
+const touch = args.includes('--touch');
+const sizeSpecs = opt('sizes', touch ? '390x844@3,360x740@4,412x915@2.625,844x390@3' : '800x600,1366x768,1920x1080')
+  .split(',').map(s => { const [wh, r] = s.split('@'); return [...wh.split('x').map(Number), r ? +r : null]; });
 const dprs = opt('dpr', '1').split(',').map(Number);
+// [width, height, ratio] for every run.
+const runs = [];
+for (const dpr of dprs) for (const [w, h, r] of sizeSpecs) if (r === null || dpr === dprs[0]) runs.push([w, h, r ?? dpr]);
 const checkFullscreen = args.includes('--fullscreen');
 const outDir = opt('out', null);
 const extraCss = opt('css', '');
@@ -150,10 +163,10 @@ const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PAT
 let failures = 0;
 let reference = null;
 
-for (const dpr of dprs) {
-  for (const [vw, vh] of sizes) {
+{
+  for (const [vw, vh, dpr] of runs) {
     const context = await browser.newContext({
-      viewport: { width: vw, height: vh }, deviceScaleFactor: dpr,
+      viewport: { width: vw, height: vh }, deviceScaleFactor: dpr, isMobile: touch, hasTouch: touch,
       screen: checkFullscreen ? { width: Math.max(vw, 1920), height: Math.max(vh, 1080) } : { width: vw, height: vh },
     });
     const page = await context.newPage();
@@ -215,30 +228,37 @@ for (const dpr of dprs) {
       await page.waitForTimeout(300);
       const overlayShown = await page.evaluate(() => !document.getElementById('overlay').hidden);
       // The toolbar is not part of the picture; hide it for the shot.
-      const hide = await page.addStyleTag({ content: '#toolbar { visibility: hidden !important; }' });
+      const hide = await page.addStyleTag({ content: '#toolbar, #touch, #rotate { visibility: hidden !important; }' });
       await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
       const png = await page.screenshot({ animations: 'disabled', caret: 'initial' });
       const shot = decodePng(png);
       const problems = [];
       if (overlayShown) problems.push('start overlay still shown');
 
-      const n = Math.floor(Math.min(shot.w / 640, shot.h / 480));
+      // Upright phone: fill the width, at the top, in the upper 62%.
+      const upright = touch && shot.h > shot.w;
+      const room = Math.floor(shot.h * 0.62);
+      let n = upright ? 0 : Math.floor(Math.min(shot.w / 640, shot.h / 480));
       let pw, ph;
-      if (n >= 1) { pw = 640 * n; ph = 480 * n; }
+      if (upright) {
+        pw = Math.min(shot.w, Math.floor(room * 4 / 3)); ph = Math.round(pw * 3 / 4);
+        if (pw % 640 === 0) n = pw / 640;  // happens to be a whole scale
+      } else if (n >= 1) { pw = 640 * n; ph = 480 * n; }
       else { pw = Math.min(shot.w, Math.floor(shot.h * 4 / 3)); ph = Math.round(pw * 3 / 4); }
       // The page moves the picture at most half a "whole CSS pixel" step
       // from the exact centre (1 device pixel at ratios 1 and 2, 3 at 1.25).
       let step = 1;
       while (step < 64 && Math.abs(step / dpr - Math.round(step / dpr)) > 1e-3) step++;
       const slack = Math.max(1, Math.ceil(step / 2));
-      const xs = placements(shot.w - pw, dpr, slack), ys = placements(shot.h - ph, dpr, slack);
+      const xs = placements(shot.w - pw, dpr, slack);
+      const ys = upright ? [0] : placements(shot.h - ph, dpr, slack);
 
       // Where is the picture? Match the frame's non-black box against the
       // screen's, then require that position to be one the page may use.
       const fbBox = bbox(fb, 640, 480), scBox = bbox(shot.rgb, shot.w, shot.h);
       let px = null, py = null;
       if (!scBox) problems.push('nothing but black on screen: the game picture is not visible');
-      else if (n < 1) {
+      else if (n < 1 || upright) {
         // Smooth scaling blurs the edges, so try each allowed position and
         // keep the closest; the margin and difference checks below decide.
         let best = Infinity;
@@ -270,12 +290,13 @@ for (const dpr of dprs) {
       if (r.first && problems.length) problems.push('first difference: ' + r.first);
       if (errors.length) problems.push('page errors: ' + errors.join('; '));
 
-      const how = n >= 1 ? `scale ${n}` : `scaled down to ${pw}x${ph} (below 1x)`;
+      const how = upright ? `upright phone, width filled: ${pw}x${ph} (scale ${(pw / 640).toFixed(3)}) at the top`
+        : n >= 1 ? `scale ${n}` : `scaled down to ${pw}x${ph} (below 1x)`;
       const where = `${how}, picture at (${cx},${cy}) in ${shot.w}x${shot.h} screenshot`;
       if (problems.length) {
         failures++;
         console.log(`${label}: FAIL ${where}\n  - ${problems.join('\n  - ')}`);
-      } else if (n >= 1) {
+      } else if (n >= 1 && !upright) {
         console.log(`${label}: OK ${where}; all ${shot.w * shot.h} screen pixels as expected`);
       } else {
         console.log(`${label}: OK ${where}; margins black, mean difference ${r.mad.toFixed(1)}`);

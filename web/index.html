@@ -32,6 +32,14 @@
   /* Below 1x (a window narrower than 640 device pixels) nearest-neighbour
      would drop whole rows and columns, so smooth filtering is used instead. */
   #canvas.smooth { image-rendering: auto; }
+  /* While #view shows the picture (see setSharp), the game canvas stays in
+     place, invisible but focusable. */
+  #canvas.behind { opacity: 0; }
+  #view {
+    position: absolute; left: 0; top: 0; transform-origin: 0 0;
+    image-rendering: auto; display: block; pointer-events: none;
+  }
+  #view[hidden] { display: none; }
   #stage.idle, #stage.idle #canvas { cursor: none; }
 
   button {
@@ -131,6 +139,7 @@
 <body>
 <div id="stage">
   <canvas id="canvas" width="640" height="480" tabindex="0" oncontextmenu="event.preventDefault()"></canvas>
+  <canvas id="view" width="640" height="480" hidden></canvas>
 
   <div id="touch" hidden>
     <div id="dpad" data-dpad><span class="u"></span><span class="d"></span><span class="l"></span><span class="r"></span></div>
@@ -235,8 +244,14 @@
     var portrait = touchMode && stage.clientHeight > stage.clientWidth;
     var room = portrait ? Math.floor(dh * 0.62) : dh;
     var n = Math.floor(Math.min(dw / 640, room / 480));
-    var w, h;
-    if (n >= 1) {
+    var w, h, sharp = false;
+    if (portrait) {
+      // Upright phone: fill the width (4:3), even at a non-integer scale.
+      w = Math.max(1, Math.min(dw, Math.floor(room * 4 / 3)));
+      h = Math.max(1, Math.round(w * 3 / 4));
+      if (w % 640 === 0 && h === w * 3 / 4) n = w / 640;  // happens to be exact
+      else { sharp = true; n = 0; }
+    } else if (n >= 1) {
       // The largest whole factor that fits: exact NxN blocks.
       w = 640 * n;
       h = 480 * n;
@@ -258,8 +273,42 @@
     canvas.style.transform = 'translate(' + Math.round(left / dpr) + 'px,' +
       Math.round(top / dpr) + 'px) scale(' + (1 / dpr) + ')';
     canvas.dataset.scale = n >= 1 ? n : (w / 640).toFixed(3);
+    if (portrait && !sharp) canvas.classList.remove('smooth');
+    setSharp(sharp, w, h, left, top, dpr);
     updateTouchUi();
     layoutTouch({ x: Math.round(left / dpr), y: Math.round(top / dpr), w: w / dpr, h: h / dpr }, portrait);
+  }
+
+  // Non-integer upscaling ("sharp bilinear"): the game picture is copied
+  // each display frame into #view, enlarged with nearest-neighbour by the
+  // smallest whole factor k at or above the target size (so every game
+  // pixel becomes an even k x k block), and #view is then shown at the
+  // target size with smooth filtering. Only the small final reduction is
+  // filtered, so edges stay crisp and no pixel row or column comes out
+  // thicker than its neighbours, as plain nearest-neighbour would make them.
+  var view = document.getElementById('view');
+  var viewCtx = null, viewK = 1, viewRaf = 0;
+  function copyFrame() {
+    viewCtx.imageSmoothingEnabled = false;
+    viewCtx.drawImage(canvas, 0, 0, 640 * viewK, 480 * viewK);
+    viewRaf = requestAnimationFrame(copyFrame);
+  }
+  function setSharp(on, w, h, left, top, dpr) {
+    if (on) {
+      viewK = Math.max(1, Math.ceil(w / 640));
+      if (view.width !== 640 * viewK) { view.width = 640 * viewK; view.height = 480 * viewK; }
+      viewCtx = viewCtx || view.getContext('2d', { alpha: false });
+      view.style.width = w + 'px';
+      view.style.height = h + 'px';
+      view.style.transform = 'translate(' + Math.round(left / dpr) + 'px,' +
+        Math.round(top / dpr) + 'px) scale(' + (1 / dpr) + ')';
+      view.dataset.scale = (w / 640).toFixed(3);
+      view.dataset.k = viewK;
+    }
+    view.hidden = !on;
+    canvas.classList.toggle('behind', on);
+    if (on && !viewRaf) viewRaf = requestAnimationFrame(copyFrame);
+    if (!on && viewRaf) { cancelAnimationFrame(viewRaf); viewRaf = 0; }
   }
 
   // Safe-area insets (notches), in CSS pixels.

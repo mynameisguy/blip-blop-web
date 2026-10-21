@@ -35,6 +35,13 @@ fits the window, in device pixels, with nearest-neighbour filtering, so each
 game pixel is an exact NxN block (also in fullscreen: the Fullscreen button
 or Alt+Return). Only when even 1x does not fit (a small window or phone) is
 the picture scaled down to fit, smoothly, instead of being cropped.
+On a touch device held upright the picture instead fills the screen width
+(4:3), usually at a non-integer scale. It is drawn "sharp-bilinear": each
+frame is copied with nearest-neighbour onto a canvas k times the game size
+(k = the smallest whole factor at or above the target), which the browser
+then scales down smoothly, so every game pixel row and column gets the same
+width and only edges blend. Held sideways, and on desktops, the exact whole
+factor applies.
 The game data (about 115 MB) downloads with a progress bar and is kept in
 the browser's Cache API, so later visits load it from disk. Because browsers
 mute audio until the first click, tap or key press, the game starts on that
@@ -52,12 +59,14 @@ content hash, so after a deploy a browser never mixes cached old and new files.
 - `tools/check_scaling.mjs <url> --fullscreen` compares whole screenshots at
   800x600, 1366x768 and 1920x1080 with the harness framebuffer: the frame
   scaled NxN, centred, uncropped, every other pixel black (`--dpr 1,2,3`
-  adds device pixel ratios, `--css` injects CSS to see it fail).
+  adds device pixel ratios, `--css` injects CSS to see it fail). `--touch`
+  runs as a phone: upright, the picture must fill the width at the top.
 - `tools/check_shell.mjs <url>` checks loading, the start gesture, audio,
   keyboard and focus handling, error messages (including a crash during
   play) and the cache.
 - `tools/check_touch_layout.mjs <url>` checks the touch controls stay off the
-  picture on common phones (and only overlap it, faintly, on a tablet).
+  picture on common phones (and only overlap it, faintly, on a tablet), and
+  that upright the picture fills the width, drawn sharp-bilinear.
 - `tools/check_touch.mjs <url> [outdir] --cfg` plays to the first level on an
   emulated phone with the touch controls (`--cfg` serves a bb.cfg with valid
   default keys).

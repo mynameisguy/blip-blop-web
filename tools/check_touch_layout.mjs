@@ -2,8 +2,9 @@
 // the game running:
 //   - landscape phones: every control is outside the game picture (in the
 //     margins), the pad is at least 88 px and the buttons at least 48 px;
-//   - portrait phones: the picture is at the top, at the largest whole
-//     scale that fits the width, and every control is below it;
+//   - portrait phones and tablets: the picture fills the screen width at
+//     the top (4:3, even at a non-integer scale, drawn sharp-bilinear on
+//     #view), and every control is below it;
 //   - only when even the smallest controls do not fit (a tablet in
 //     landscape) may they cover the picture, and then they are faint;
 //   - every control is fully on screen;
@@ -77,7 +78,10 @@ for (const [w, h, dpr, mayOverlap] of DEVICES) {
       .map(s => document.querySelector(s))
       .filter(el => el && !el.hidden && getComputedStyle(el).display !== 'none')
       .map(el => [el.id, r(el)]);
-    return { pic: r(document.getElementById('canvas')), parts, W: innerWidth, H: innerHeight,
+    const view = document.getElementById('view');
+    const shownPic = view && !view.hidden ? view : document.getElementById('canvas');
+    return { pic: r(shownPic), parts, picId: shownPic.id, k: view ? view.dataset.k : null,
+             bw: view ? view.width : 0, bh: view ? view.height : 0, W: innerWidth, H: innerHeight,
              overlap: document.getElementById('touch').classList.contains('overlap'),
              scale: document.getElementById('canvas').dataset.scale,
              shown: !document.getElementById('touch').hidden };
@@ -100,11 +104,21 @@ for (const [w, h, dpr, mayOverlap] of DEVICES) {
   }
   check(off.length === 0, `${label}: controls fully on screen`, off.join(' '));
   if (h > w) {
-    const dw = Math.round(w * dpr), n = Math.floor(Math.min(dw / 640, Math.floor(h * dpr * 0.62) / 480));
-    const expectW = n >= 1 ? 640 * n / dpr : null;
-    check(pt <= 1 && (expectW === null || Math.abs((pr - pl) - expectW) < 0.01),
-          `${label}: portrait picture at the top at the largest whole scale for the width`,
-          `top ${pt}, width ${pr - pl}${expectW ? ', expected ' + expectW : ''}`);
+    // Fill the width (4:3) at the top, unless 62% of the height is shorter.
+    const dw = Math.round(w * dpr), room = Math.floor(Math.round(h * dpr) * 0.62);
+    const ew = Math.min(dw, Math.floor(room * 4 / 3)), eh = Math.round(ew * 3 / 4);
+    const pw = (pr - pl) * dpr, ph = (pb - pt) * dpr;
+    check(pt <= 1 && Math.abs(pw - ew) < 1.01 && Math.abs(ph - eh) < 1.01,
+          `${label}: portrait picture at the top, filling the width (4:3)`,
+          `top ${pt}, ${pw.toFixed(1)}x${ph.toFixed(1)} device px, expected ${ew}x${eh}`);
+    if (ew % 640 !== 0) {
+      const k = Math.ceil(ew / 640);
+      check(m.picId === 'view' && +m.k === k && m.bw === 640 * k && m.bh === 480 * k,
+            `${label}: non-integer scale shown sharp-bilinear (nearest x${k}, then smooth down)`,
+            `shown on #${m.picId}, k ${m.k}, buffer ${m.bw}x${m.bh}`);
+    }
+  } else {
+    check(m.picId === 'canvas', `${label}: landscape keeps the integer-scaled game canvas`, `shown on #${m.picId}`);
   }
   if (out) await page.screenshot({ path: `${out}/layout-${w}x${h}.png` });
 
