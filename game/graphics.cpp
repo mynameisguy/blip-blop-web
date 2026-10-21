@@ -5,7 +5,12 @@
 extern SDL::Surface* backSurface;
 
 void Graphics::Init() {
+#ifdef __EMSCRIPTEN__
+    // The browser SDL port has no haptic support, so init everything else.
+    if (SDL_Init(SDL_INIT_EVERYTHING & ~SDL_INIT_HAPTIC) == -1) {
+#else
     if (SDL_Init(SDL_INIT_EVERYTHING) == -1) {
+#endif
         throw std::runtime_error(std::string("Can't initialize SDL") +
                                  SDL_GetError());
     }
@@ -23,7 +28,12 @@ void Graphics::SetGfxMode(int x, int y, int d, bool fullscreen) {
         y,
         x,
         y,
+#ifdef __EMSCRIPTEN__
+        // Keep the canvas at its native size; the page handles fullscreen.
+        SDL_WINDOW_SHOWN)));
+#else
         SDL_WINDOW_SHOWN | (fullscreen * SDL_WINDOW_FULLSCREEN))));
+#endif
 
     renderer_.reset(SDL_ErrWrap(SDL_CreateRenderer(
         window_.get(),

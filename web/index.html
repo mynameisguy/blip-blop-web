@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Blip &amp; Blop</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; color: #ccc; font: 14px sans-serif; }
+  body { display: flex; align-items: center; justify-content: center; }
+  canvas { width: 640px; height: 480px; image-rendering: pixelated; outline: none; }
+  #status { position: absolute; top: 8px; left: 0; right: 0; text-align: center; }
+</style>
+</head>
+<body>
+<div id="status">Loading…</div>
+<canvas id="canvas" width="640" height="480" tabindex="0" oncontextmenu="event.preventDefault()"></canvas>
+<script>
+  var statusEl = document.getElementById('status');
+  var Module = {
+    canvas: document.getElementById('canvas'),
+    onDataProgress: function (done, total) { statusEl.textContent = 'Loading data ' + done + ' / ' + total; },
+    onDataError: function (e) { statusEl.textContent = 'Failed to load: ' + e.message; },
+    onRuntimeInitialized: function () { statusEl.textContent = ''; Module.canvas.focus(); },
+    print: function (t) { console.log(t); },
+    printErr: function (t) { console.warn(t); }
+  };
+</script>
+<script async src="blipblop.js"></script>
+</body>
+</html>
