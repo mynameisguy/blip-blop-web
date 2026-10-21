@@ -840,6 +840,33 @@
   }
   retryBtn.addEventListener('click', function () { location.reload(); });
 
+  // After a deploy, a copy of this page still in the browser's HTTP cache
+  // names program files (content-hashed) that the new deploy removed. When
+  // loading fails before the game runs, fetch this page fresh (which also
+  // refreshes the cached copy); if it names a different program, reload
+  // once into the new version instead of showing an error.
+  var SCRIPT = 'blipblop.js';
+  function failLoad(msg) {
+    if (failed || checkingStale) return;
+    checkingStale = true;
+    statusEl.textContent = 'Checking for a newer version…';
+    var done = function () { checkingStale = false; fail(msg); };
+    if (typeof fetch !== 'function') return done();
+    fetch(location.href.split('#')[0], { cache: 'reload' }).then(function (r) {
+      return r.ok ? r.text() : '';
+    }).then(function (html) {
+      var m = /['"](blipblop\.[0-9a-f]+\.js)['"]/.exec(html);
+      if (!m || m[1] === SCRIPT) return done();
+      var tried = null;
+      try { tried = sessionStorage.getItem('bb-reloaded-for'); } catch (e) {}
+      if (tried === m[1]) return done();
+      try { sessionStorage.setItem('bb-reloaded-for', m[1]); } catch (e) { return done(); }
+      console.warn('Page is out of date (' + SCRIPT + ', now ' + m[1] + '); reloading.');
+      location.reload();
+    }).catch(done);
+  }
+  var checkingStale = false;
+
   // A crash in the game (a WebAssembly trap such as an out-of-bounds memory
   // access, or an exception thrown through the game's code) does not go
   // through abort(), so catch it here instead of leaving a frozen picture.
@@ -886,12 +913,12 @@
       }
     },
     onDataError: function (e) {
-      fail('Could not load the game data (' + (e && e.message || e) +
+      failLoad('Could not load the game data (' + (e && e.message || e) +
            '). Check your connection and reload.');
     },
     onAbort: function (what) {
       console.error('Game aborted:', what);
-      fail(running ? MSG_STOPPED : MSG_NOSTART);
+      if (running) fail(MSG_STOPPED); else failLoad(MSG_NOSTART);
     },
     onRuntimeInitialized: function () {
       running = true;
@@ -912,9 +939,9 @@
   } else {
     updateStart();
     var s = document.createElement('script');
-    s.src = 'blipblop.js';
+    s.src = SCRIPT;
     s.async = true;
-    s.onerror = function () { fail('Could not load the game (blipblop.js). Check your connection and reload.'); };
+    s.onerror = function () { failLoad('Could not load the game (' + SCRIPT + '). Check your connection and reload.'); };
     document.body.appendChild(s);
   }
 })();

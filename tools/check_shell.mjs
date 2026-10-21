@@ -1,6 +1,7 @@
 // Checks the page around the game in a browser that blocks audio until a
 // user gesture (the default): loading progress, the start overlay, audio
-// unlocking, keyboard handling and the data cache.
+// unlocking, keyboard handling, the data cache, errors, and a page cached
+// from before a deploy.
 //
 //   node tools/check_shell.mjs <url>
 //
@@ -144,6 +145,41 @@ for (const kind of ['RuntimeError', 'Error']) {
   const text = shown ? await page3.$eval('#status', e => e.textContent) : '(nothing shown)';
   check(shown && /stopped because of an error/.test(text), `a ${kind} during play shows an error`, text);
   await ctx3.close();
+}
+
+// After a deploy, a page still cached by the browser names a program file
+// the deploy removed: the page reloads once into the new version. When the
+// program is really missing, it shows the error and does not keep reloading.
+{
+  const real = await (await fetch(url)).text();
+  const name = (/'(blipblop\.[0-9a-f]+\.js)'/.exec(real) || [])[1];
+  const isPage = u => u.href.split('#')[0] === url || u.href.split('#')[0] === new URL('index.html', url).href;
+  for (const really of [false, true]) {
+    const ctx4 = await browser.newContext();
+    const page4 = await ctx4.newPage();
+    const served = [];
+    await page4.route(isPage, r => {
+      const stale = !really && served.length === 0;
+      served.push(r.request().resourceType() + (stale ? ' (old page)' : ''));
+      r.fulfill({ status: 200, contentType: 'text/html',
+                  body: stale ? real.replace(name, 'blipblop.0123456789ab.js') : real });
+    });
+    await page4.route(/blipblop\.0123456789ab\.js/, r => r.fulfill({ status: 404, body: 'gone' }));
+    if (really) await page4.route(u => u.href.endsWith(name), r => r.fulfill({ status: 404, body: 'gone' }));
+    await page4.goto(url);
+    if (!really) {
+      const ok = await page4.waitForSelector('#start.ready', { timeout: 300000 }).then(() => true, () => false);
+      check(ok && served.length === 3,
+            'a page cached from before a deploy reloads once into the new version', served.join(', '));
+    } else {
+      await page4.waitForSelector('#status.error', { timeout: 120000 }).catch(() => {});
+      await page4.waitForTimeout(2000);
+      const text = await page4.$eval('#status', e => e.textContent);
+      check(/Could not load the game/.test(text) && served.length === 2,
+            'a program that is really missing shows the error, without reloading', `${text} | ${served.join(', ')}`);
+    }
+    await ctx4.close();
+  }
 }
 
 await Promise.race([browser.close(), new Promise(r => setTimeout(r, 5000))]);

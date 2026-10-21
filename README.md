@@ -57,6 +57,10 @@ spot between them presses both.
 
 `web/build.sh` names `blipblop.js`, the `.wasm` and the data manifest by
 content hash, so after a deploy a browser never mixes cached old and new files.
+A copy of the page itself still in the browser's cache names files the
+deploy removed; when loading then fails, the page fetches itself fresh and,
+if that names a different program, reloads once into the new version
+(only an error that remains after that is shown).
 
 - `tools/check_scaling.mjs <url> --fullscreen` compares whole screenshots at
   800x600, 1366x768 and 1920x1080 with the harness framebuffer (frame 400,
