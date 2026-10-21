@@ -23,6 +23,7 @@
 #include "control_alias.h"
 #include "fmod.h"
 #include "globals.h"
+#include "harness.h"
 
 bool	vSyncOn = true;
 
@@ -48,7 +49,8 @@ void load_BB3_config(const char * cfg_file)
 	FILE *	fic;
 	int		a;
 
-	fic = fopen(cfg_file, "rb");
+	// Test harness: BB_DEFAULT_CONFIG=1 ignores the saved key bindings.
+	fic = bb_env_int("BB_DEFAULT_CONFIG", 0) ? NULL : fopen(cfg_file, "rb");
 
 	if (fic == NULL) {
 		debug << "Cannot find config file. Will use default config.\n";

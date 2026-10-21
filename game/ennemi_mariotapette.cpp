@@ -534,11 +534,20 @@ void EnnemiMariotapette::estTouche(Tir * tir)
 	for (int i = 0; i < 4 ; i++) {
                 GoreGiclure* s;
 		if ((tir->dir >= 2) && (tir->dir <= 6)) {
-			s = new GoreGiclure(rand() % 6 , -2 - rand() % 6);
+			// Draw the arguments right to left, as GCC and MSVC evaluate them (clang goes left to right).
+			const int rnd1 = -2 - rand() % 6;
+			const int rnd0 = rand() % 6;
+			s = new GoreGiclure(rnd0, rnd1);
 		} else if ((tir->dir >= 10) && (tir->dir <= 14)) {
-			s = new GoreGiclure(-rand() % 5 - 1, -2 - rand() % 6);
+			// Draw the arguments right to left, as GCC and MSVC evaluate them (clang goes left to right).
+			const int rnd1 = -2 - rand() % 6;
+			const int rnd0 = -rand() % 5 - 1;
+			s = new GoreGiclure(rnd0, rnd1);
 		} else {
-			s = new GoreGiclure(rand() % 11 - 5, -2 - rand() % 6);
+			// Draw the arguments right to left, as GCC and MSVC evaluate them (clang goes left to right).
+			const int rnd1 = -2 - rand() % 6;
+			const int rnd0 = rand() % 11 - 5;
+			s = new GoreGiclure(rnd0, rnd1);
 		}
 		s->x = x + rand() % 11 - 5;
 		s->y = y - rand() % 30 - 10;

@@ -154,9 +154,15 @@ void EnnemiRayman::onAvance()
 					Sprite* s;
 					//faire gicler le premier poing
 					if (x - offset > 320) {
-						s = new MorceauRayman(230, -1 - rand() % 3, -3 - rand() % 3);
+						// Draw the arguments right to left, as GCC and MSVC evaluate them (clang goes left to right).
+						const int rnd2 = -3 - rand() % 3;
+						const int rnd1 = -1 - rand() % 3;
+						s = new MorceauRayman(230, rnd1, rnd2);
 					} else {
-						s = new MorceauRayman(230, 1 + rand() % 3, -3 - rand() % 3);
+						// Draw the arguments right to left, as GCC and MSVC evaluate them (clang goes left to right).
+						const int rnd2 = -3 - rand() % 3;
+						const int rnd1 = 1 + rand() % 3;
+						s = new MorceauRayman(230, rnd1, rnd2);
 					}
 
 					s->dir = dir;
@@ -202,9 +208,15 @@ void EnnemiRayman::onAvance()
 					//faire gicler le second poing
 					Sprite * s;
 					if (x - offset > 320) {
-						s = new MorceauRayman(231, -1 - rand() % 3, -3 - rand() % 3);
+						// Draw the arguments right to left, as GCC and MSVC evaluate them (clang goes left to right).
+						const int rnd2 = -3 - rand() % 3;
+						const int rnd1 = -1 - rand() % 3;
+						s = new MorceauRayman(231, rnd1, rnd2);
 					} else {
-						s = new MorceauRayman(231, 1 + rand() % 3, -3 - rand() % 3);
+						// Draw the arguments right to left, as GCC and MSVC evaluate them (clang goes left to right).
+						const int rnd2 = -3 - rand() % 3;
+						const int rnd1 = 1 + rand() % 3;
+						s = new MorceauRayman(231, rnd1, rnd2);
 					}
 
 					s->dir = dir;
@@ -313,9 +325,15 @@ void EnnemiRayman::onMeure()
 		//fait gicler la tete
 		Sprite * tete;
 		if (x - offset > 320) {
-			tete = new MorceauTeteRayman(-1 - rand() % 3, -3 - rand() % 3);
+			// Draw the arguments right to left, as GCC and MSVC evaluate them (clang goes left to right).
+			const int rnd1 = -3 - rand() % 3;
+			const int rnd0 = -1 - rand() % 3;
+			tete = new MorceauTeteRayman(rnd0, rnd1);
 		} else {
-			tete = new MorceauTeteRayman(1 + rand() % 3, -3 - rand() % 3);
+			// Draw the arguments right to left, as GCC and MSVC evaluate them (clang goes left to right).
+			const int rnd1 = -3 - rand() % 3;
+			const int rnd0 = 1 + rand() % 3;
+			tete = new MorceauTeteRayman(rnd0, rnd1);
 		}
 		tete->x = x;
 		tete->y = y - 60;

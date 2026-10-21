@@ -95,6 +95,37 @@ node tools/web_dump.mjs http://localhost:8000/ /tmp/web 50 1500
 python3 tools/compare_frames.py /tmp/native /tmp/web /tmp/diff
 ```
 
+More harness options (all off by default): `BB_START_LEVEL=n` starts a new
+game at level n of `data/bb.lst` with its briefing (13 goes straight to the
+end sequence), `BB_LIVES=n` sets the starting lives, `BB_DEFAULT_CONFIG=1`
+ignores `data/bb.cfg` and uses the default keys (arrows, Left Ctrl fire, Menu
+jump, Space cow bomb). Input script step numbers count frames plus one step
+per turn of a blocking "press a key" wait, so scripts can get past those.
+
+### Full-game coverage
+
+`tools/coverage.py` plays every part of the game in both builds with the same
+input script (menus and options, character selection, each level with its
+briefing while running, jumping and shooting, the pause menu, RPG dialogue
+scenes, game over, the end cinematic and credits, hi-score name entry and
+table, attract mode) and compares every frame. The harness hashes each
+frame's pixels (`BB_HASH_EVERY`, same code in both builds), so nothing big is
+written; pictures and diff images are saved only for frames that differ.
+
+```sh
+cmake game -B build && make -C build -j8
+web/build.sh
+CHROMIUM_PATH=/path/to/chromium python3 tools/coverage.py --jobs 3 --repeat 2
+python3 tools/coverage.py --list          # segments
+python3 tools/coverage.py level05-bisous2 # one segment
+```
+
+`--repeat N` runs the native build N times per segment and fails if the runs
+disagree (uninitialised memory and the like). A run that crashes, exits
+non-zero or misses frames also fails. It serves `web/dist` itself and writes
+hashes, logs, diffs and a `summary.json` under `--out` (default
+`/tmp/bb-coverage`).
+
 ## Saves and input
 
 The settings (`data/bb.cfg`: keys, options) and hi-scores (`data/bb.scr`)

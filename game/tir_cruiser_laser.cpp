@@ -16,7 +16,9 @@
 
 #include "tir_cruiser_laser.h"
 
-TirCruiserLaser::TirCruiserLaser(int vx, int nb_pic): dx(vx)
+// npic was never set, so update() switched on garbage; it is the picture
+// number the per-picture offsets below are written for.
+TirCruiserLaser::TirCruiserLaser(int vx, int nb_pic): dx(vx), npic(nb_pic)
 {
 	pic = pbk_niveau[nb_pic];
 	etape = 0;
