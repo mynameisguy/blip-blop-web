@@ -43,7 +43,7 @@ export async function finish() {
 }
 
 export async function screenshot(page, name) {
-  const png = await page.locator('canvas').screenshot();
+  const png = await page.locator('#canvas').screenshot();
   if (driver.outDir && name) fs.writeFileSync(`${driver.outDir}/${name}.png`, png);
   return png;
 }
