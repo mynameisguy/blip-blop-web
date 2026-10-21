@@ -78,6 +78,7 @@
 
 #include "precache.h"
 #include "trace.h"
+#include "harness.h"
 
 Personnage dummyPlayer;
 
@@ -138,12 +139,32 @@ void Game::jouePartie(int nbj, int idj) {
         list_joueurs.push_back(player2);
     }
 
+    // Test harness: BB_LIVES sets the starting lives.
+    if (int lives = bb_env_int("BB_LIVES", 0)) {
+        for (Couille* j : list_joueurs) j->nb_life = lives;
+    }
+
     // Joue à tous les niveaux
     //
     cowBombOn = false;
     last_perfect1 = last_perfect2 = false;
     int nbNiv = 0;
     i = 0;
+
+    // Test harness: BB_START_LEVEL=n starts right after level n-1, so with
+    // the briefing before level n (or the end sequence past the last level).
+    for (int lvl = bb_env_int("BB_START_LEVEL", 1) - 1; lvl > 0 && i < nb_part;
+         i++) {
+        if (type_part[i] == PART_LEVEL) lvl--;
+    }
+    // Set up what the skipped levels would have: the enemies' target on a
+    // player (some enemies read it before the first frame of a level) and
+    // the cow bomb given after the first level.
+    if (i > 0) {
+        tete_turc = player1;
+        for (Couille* j : list_joueurs) j->nb_cow_bomb = 1;
+        cowBombOn = true;
+    }
 
     while (i < nb_part && letsgo && !app_killed) {
         if (type_part[i] == PART_LEVEL) {

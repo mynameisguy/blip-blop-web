@@ -72,6 +72,11 @@ Harness& harness() {
 
 }  // namespace
 
+int bb_env_int(const char* name, int fallback) {
+    const char* s = getenv(name);
+    return (s && *s) ? atoi(s) : fallback;
+}
+
 std::uint32_t bb_ticks() {
     Harness& h = harness();
     if (h.step_ms <= 0) return SDL_GetTicks();
@@ -84,28 +89,10 @@ std::uint32_t bb_ticks() {
     return h.virtual_ms;
 }
 
-void bb_on_frame(SDL_Surface* frame) {
-    Harness& h = harness();
+// One step of the harness clock: advances virtual time, delivers the input
+// script events due on the next step and stops at BB_MAX_FRAMES.
+static void tick(Harness& h) {
     std::uint32_t n = h.frame++;
-
-    if (n % h.dump_every == 0) {
-#ifdef __EMSCRIPTEN__
-        // Hands the frame to the page; a test page sets Module.onFrame.
-        EM_ASM(
-            {
-                if (Module.onFrame)
-                    Module.onFrame($0, HEAPU8.subarray($1, $1 + $2 * $3), $2,
-                                   $3);
-            },
-            n, frame->pixels, frame->pitch, frame->h);
-#else
-        if (h.dump_dir) {
-            char path[512];
-            snprintf(path, sizeof(path), "%s/frame_%06u.bmp", h.dump_dir, n);
-            SDL_SaveBMP(frame, path);
-        }
-#endif
-    }
 
     if (h.step_ms > 0) {
         h.virtual_ms += h.step_ms;
@@ -134,4 +121,44 @@ void bb_on_frame(SDL_Surface* frame) {
         exit(0);
 #endif
     }
+}
+
+void bb_on_frame(SDL_Surface* frame) {
+    Harness& h = harness();
+    std::uint32_t n = h.frame;
+
+    // The browser build keeps running a little after BB_MAX_FRAMES.
+    bool past_end = h.max_frames > 0 && n >= (std::uint32_t)h.max_frames;
+
+    if (n % h.dump_every == 0 && !past_end) {
+#ifdef __EMSCRIPTEN__
+        // Hands the frame to the page; a test page sets Module.onFrame.
+        EM_ASM(
+            {
+                if (Module.onFrame)
+                    Module.onFrame($0, HEAPU8.subarray($1, $1 + $2 * $3), $2,
+                                   $3);
+            },
+            n, frame->pixels, frame->pitch, frame->h);
+#else
+        if (h.dump_dir) {
+            char path[512];
+            snprintf(path, sizeof(path), "%s/frame_%06u.bmp", h.dump_dir, n);
+            SDL_SaveBMP(frame, path);
+        }
+#endif
+    }
+
+    tick(h);
+}
+
+void bb_input_wait() {
+    Harness& h = harness();
+    // Under the harness a blocking wait takes one step of the clock, without
+    // a frame, so scripted keys reach it; steps are counted like frames.
+    if (h.step_ms > 0 || !h.script.empty()) tick(h);
+#ifdef __EMSCRIPTEN__
+    // Give the browser a chance to deliver key events.
+    emscripten_sleep(h.step_ms > 0 ? 0 : 10);
+#endif
 }

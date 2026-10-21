@@ -9,6 +9,11 @@
 //   BB_DUMP_EVERY     dump period in frames (default 1)
 //   BB_INPUT_SCRIPT   file of "<frame> <down|up> <SDL key name>" lines
 //   BB_MAX_FRAMES     quit after this many frames
+//   BB_START_LEVEL    start a new game at level N of data/bb.lst (1-based),
+//                     including the briefing before it; one past the last
+//                     level goes straight to the end sequence
+//   BB_LIVES          lives each player starts a new game with
+//   BB_DEFAULT_CONFIG 1: ignore data/bb.cfg and use the default key bindings
 
 #include <cstdint>
 
@@ -20,6 +25,13 @@ extern "C" void bb_srand(unsigned int seed);
 
 std::uint32_t bb_ticks();
 
+// Integer harness option from the environment, or `fallback` when unset.
+int bb_env_int(const char* name, int fallback);
+
 // Called by Graphics::Flip with the frame about to be shown.
 struct SDL_Surface;
 void bb_on_frame(SDL_Surface* frame);
+
+// Called on each turn of a loop that blocks until keys are pressed or
+// released (Input::waitKey, Input::waitClean), which draws no frames.
+void bb_input_wait();
