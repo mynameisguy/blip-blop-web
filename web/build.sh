@@ -40,4 +40,21 @@ for n in names:
 json.dump(out, open(os.path.join(d, 'manifest.json'), 'w'), separators=(',', ':'))
 PY
 rm "$OUT/data/files.txt"
-cp "$ROOT/web/index.html" "$OUT/index.html"
+
+# Versioned names, so a browser never pairs a cached older blipblop.js or
+# .wasm (or manifest) with newer files after a deploy: the .wasm and the
+# manifest are named by content hash inside blipblop.js, and blipblop.js by
+# its own hash inside index.html.
+cd "$OUT"
+rm -f blipblop.*.js blipblop.*.wasm data/manifest.*.json
+hash() { sha256sum "$1" | cut -c1-12; }
+WASM="blipblop.$(hash blipblop.wasm).wasm"
+MANIFEST="manifest.$(hash data/manifest.json).json"
+mv blipblop.wasm "$WASM"
+cp data/manifest.json "data/$MANIFEST"
+sed -i -e "s|\"blipblop\.wasm\"|\"$WASM\"|g" -e "s|data/manifest\.json|data/$MANIFEST|g" blipblop.js
+grep -q "\"$WASM\"" blipblop.js && grep -q "data/$MANIFEST" blipblop.js
+JS="blipblop.$(hash blipblop.js).js"
+mv blipblop.js "$JS"
+sed "s|'blipblop\.js'|'$JS'|" "$ROOT/web/index.html" > index.html
+grep -q "'$JS'" index.html

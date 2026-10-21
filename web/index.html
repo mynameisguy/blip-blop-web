@@ -96,43 +96,35 @@
     -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
   }
   #touch > * { pointer-events: auto; touch-action: none; position: absolute; }
+  /* layoutTouch() places and sizes these to fit the free space beside (or,
+     in portrait, below) the picture. */
   #dpad {
-    --size: min(150px, 40vh, 40vw);
-    left: calc(14px + env(safe-area-inset-left)); bottom: calc(14px + env(safe-area-inset-bottom));
-    width: var(--size); height: var(--size); border-radius: 50%;
+    border-radius: 50%;
     background: rgba(255, 255, 255, .07); border: 1px solid rgba(255, 255, 255, .2);
   }
   #dpad span {
-    position: absolute; width: 0; height: 0; border: 13px solid transparent; opacity: .55;
+    position: absolute; width: 0; height: 0; border: 12px solid transparent; opacity: .55;
   }
   #dpad span.on { opacity: 1; }
-  #dpad .u { left: calc(50% - 13px); top: 8%; border-bottom: 18px solid #fff; border-top-width: 0; }
-  #dpad .d { left: calc(50% - 13px); bottom: 8%; border-top: 18px solid #fff; border-bottom-width: 0; }
-  #dpad .l { top: calc(50% - 13px); left: 8%; border-right: 18px solid #fff; border-left-width: 0; }
-  #dpad .r { top: calc(50% - 13px); right: 8%; border-left: 18px solid #fff; border-right-width: 0; }
+  #dpad .u { left: calc(50% - 12px); top: 9%; border-bottom: 16px solid #fff; border-top-width: 0; }
+  #dpad .d { left: calc(50% - 12px); bottom: 9%; border-top: 16px solid #fff; border-bottom-width: 0; }
+  #dpad .l { top: calc(50% - 12px); left: 9%; border-right: 16px solid #fff; border-left-width: 0; }
+  #dpad .r { top: calc(50% - 12px); right: 9%; border-left: 16px solid #fff; border-right-width: 0; }
   .tbtn {
     display: flex; align-items: center; justify-content: center;
     border-radius: 50%; color: rgba(255, 255, 255, .85); font-size: 13px; font-weight: 600;
     background: rgba(255, 255, 255, .1); border: 1px solid rgba(255, 255, 255, .28);
-    box-sizing: border-box;
+    box-sizing: border-box; padding: 0;
   }
   .tbtn.on { background: rgba(255, 204, 51, .45); border-color: var(--accent); }
-  #t-fire { --s: min(74px, 19vh); width: var(--s); height: var(--s);
-            right: calc(14px + env(safe-area-inset-right)); bottom: calc(40px + env(safe-area-inset-bottom)); }
-  #t-jump { --s: min(64px, 16vh); width: var(--s); height: var(--s);
-            right: calc(14px + min(84px, 21vh) + env(safe-area-inset-right)); bottom: calc(14px + env(safe-area-inset-bottom)); }
-  #t-special { --s: min(56px, 14vh); width: var(--s); height: var(--s);
-               right: calc(30px + env(safe-area-inset-right)); bottom: calc(52px + min(84px, 21vh) + env(safe-area-inset-bottom)); }
-  #t-menu, #t-start {
-    top: calc(10px + env(safe-area-inset-top)); height: 30px; padding: 0 12px;
-    border-radius: 15px; font-size: 12px; font-weight: 600;
-  }
-  #t-menu { left: calc(12px + env(safe-area-inset-left)); }
-  #t-start { left: calc(84px + env(safe-area-inset-left)); }
+  .tbtn.pill { border-radius: 15px; font-size: 12px; height: 30px; }
+  /* No room beside the picture (e.g. a tablet): the controls sit over it,
+     fainter. */
+  #touch.overlap > * { opacity: .45; }
+  body.touch #toolbar { display: none; }
   #rotate {
-    position: absolute; left: 50%; top: calc(54px + env(safe-area-inset-top)); transform: translateX(-50%);
-    z-index: 2; padding: 6px 12px; border-radius: 16px; white-space: nowrap;
-    background: var(--panel); border: 1px solid var(--line); color: var(--dim); font-size: 13px;
+    position: absolute; z-index: 2; white-space: nowrap;
+    color: var(--dim); font-size: 12px; opacity: .8;
   }
 </style>
 </head>
@@ -142,13 +134,14 @@
 
   <div id="touch" hidden>
     <div id="dpad" data-dpad><span class="u"></span><span class="d"></span><span class="l"></span><span class="r"></span></div>
-    <div class="tbtn" id="t-menu" data-act="menu">Menu</div>
-    <div class="tbtn" id="t-start" data-act="start">Start</div>
+    <div class="tbtn pill" id="t-menu" data-act="menu">Menu</div>
+    <div class="tbtn pill" id="t-start" data-act="start">Start</div>
+    <button class="tbtn pill" id="t-fs" type="button" tabindex="-1">Fullscreen</button>
     <div class="tbtn" id="t-special" data-act="special">Special</div>
     <div class="tbtn" id="t-jump" data-act="jump">Jump</div>
     <div class="tbtn" id="t-fire" data-act="fire">Fire</div>
   </div>
-  <div id="rotate" hidden>Turn your phone sideways for a bigger picture</div>
+  <div id="rotate" hidden>Turn the phone sideways for a bigger picture</div>
 
   <div id="toolbar">
     <button id="help-btn" type="button" tabindex="-1" title="Controls">Controls</button>
@@ -237,7 +230,11 @@
       dw = stageDevice[0];
       dh = stageDevice[1];
     }
-    var n = Math.floor(Math.min(dw / 640, dh / 480));
+    // A phone held upright: the picture goes at the top, as large as the
+    // width allows, and the touch controls go in the space below it.
+    var portrait = touchMode && stage.clientHeight > stage.clientWidth;
+    var room = portrait ? Math.floor(dh * 0.62) : dh;
+    var n = Math.floor(Math.min(dw / 640, room / 480));
     var w, h;
     if (n >= 1) {
       // The largest whole factor that fits: exact NxN blocks.
@@ -247,12 +244,12 @@
     } else {
       // The window cannot show 640x480 even at 1x: scale down to fit (whole
       // device pixels, 4:3 kept) rather than crop, with smooth filtering.
-      w = Math.max(1, Math.min(dw, Math.floor(dh * 4 / 3)));
+      w = Math.max(1, Math.min(dw, Math.floor(room * 4 / 3)));
       h = Math.max(1, Math.round(w * 3 / 4));
       canvas.classList.add('smooth');
     }
     var left = snap((dw - w) / 2, dpr);
-    var top = snap((dh - h) / 2, dpr);
+    var top = portrait ? snap(insets().top * dpr, dpr) : snap((dh - h) / 2, dpr);
     // The size is set in device pixels and scaled down by the ratio with a
     // transform: a CSS width such as 640 * 2 / 1.1 px cannot be stored
     // exactly, a transform can.
@@ -262,6 +259,109 @@
       Math.round(top / dpr) + 'px) scale(' + (1 / dpr) + ')';
     canvas.dataset.scale = n >= 1 ? n : (w / 640).toFixed(3);
     updateTouchUi();
+    layoutTouch({ x: Math.round(left / dpr), y: Math.round(top / dpr), w: w / dpr, h: h / dpr }, portrait);
+  }
+
+  // Safe-area insets (notches), in CSS pixels.
+  var insetProbe = document.createElement('div');
+  insetProbe.style.cssText = 'position:absolute;visibility:hidden;pointer-events:none;' +
+    'padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)';
+  stage.appendChild(insetProbe);
+  function insets() {
+    var cs = getComputedStyle(insetProbe);
+    return { top: parseFloat(cs.paddingTop) || 0, right: parseFloat(cs.paddingRight) || 0,
+             bottom: parseFloat(cs.paddingBottom) || 0, left: parseFloat(cs.paddingLeft) || 0 };
+  }
+
+  // Places the touch controls. On a phone held sideways they go in the
+  // margins left and right of the picture, sized to fit them; held upright,
+  // in the space below it. Only when even the smallest sizes (pad 88 px,
+  // buttons 48 px) do not fit do they go over the picture, fainter.
+  function place(el, x, y, w, h) {
+    el.style.left = Math.round(x) + 'px';
+    el.style.top = Math.round(y) + 'px';
+    el.style.width = Math.round(w) + 'px';
+    if (h !== undefined) el.style.height = Math.round(h) + 'px';
+  }
+  function layoutTouch(pic, portrait) {
+    var W = stage.clientWidth, H = stage.clientHeight, ins = insets(), g = 8, pillH = 30;
+    var pad = document.getElementById('dpad'), fire = document.getElementById('t-fire'),
+        jump = document.getElementById('t-jump'), special = document.getElementById('t-special'),
+        menu = document.getElementById('t-menu'), start = document.getElementById('t-start'),
+        fs = document.getElementById('t-fs');
+    var hasFs = !fsBtn.hidden;
+    fs.style.display = hasFs ? '' : 'none';
+    var L = ins.left + g, R = W - ins.right - g, T = ins.top + g, B = H - ins.bottom - g;
+
+    // Buttons as a cluster in a box (x0..x1, y0..y1), bottom-aligned: two
+    // columns (Fire low right, Jump low left, Special above Fire) when wide
+    // enough, else one column. Returns the button size used.
+    function buttons(x0, x1, y0, y1) {
+      var cw = x1 - x0, ch = y1 - y0, b;
+      var pairB = Math.min(76, (cw - g) / 2, (ch - g) / 2);
+      var colB = Math.min(72, cw, (ch - 2 * g) / 3);
+      // Whichever arrangement gives the bigger buttons.
+      if (pairB >= 52 && pairB >= colB) {
+        b = pairB;
+        place(fire, x1 - b, y1 - b - b * 0.35, b, b);
+        place(jump, x1 - 2 * b - g, y1 - b, b, b);
+        place(special, x1 - b * 0.85, y1 - 2 * b - g - b * 0.35, b * 0.85, b * 0.85);
+        return b;
+      }
+      b = colB;
+      var cx = x0 + (cw - b) / 2;
+      place(fire, cx, y1 - b, b, b);
+      place(jump, cx, y1 - 2 * b - g, b, b);
+      place(special, cx, y1 - 3 * b - 2 * g, b, b);
+      return b;
+    }
+
+    var fits = false;
+    rotateHint.hidden = true;
+    if (portrait) {
+      var y = pic.y + pic.h + g;
+      place(menu, L, y, 72, pillH);
+      place(start, L + 72 + g, y, 72, pillH);
+      if (hasFs) place(fs, R - 96, y, 96, pillH);
+      y += pillH + g;
+      if (overlay.hidden && touchMode) {
+        rotateHint.hidden = false;
+        rotateHint.style.left = L + 'px';
+        rotateHint.style.top = y + 'px';
+        y += 22;
+      }
+      var areaH = B - y;
+      var P = Math.min(180, (R - L) * 0.48, areaH);
+      place(pad, L, B - P, P, P);
+      var b = buttons(L + P + g, R, Math.max(y, B - areaH), B);
+      fits = P >= 88 && b >= 48;
+    } else {
+      // Columns beside the picture.
+      var lx0 = L, lx1 = pic.x - g, rx0 = pic.x + pic.w + g, rx1 = R;
+      var cw = Math.min(lx1 - lx0, rx1 - rx0);
+      var pillW = Math.min(80, cw);
+      place(menu, lx0, T, pillW, pillH);
+      place(start, lx0, T + pillH + g, pillW, pillH);
+      if (hasFs) place(fs, rx1 - Math.min(96, cw), T, Math.min(96, cw), pillH);
+      var P = Math.min(150, cw, B - (T + 2 * pillH + 2 * g));
+      var b = buttons(rx0, rx1, T + (hasFs ? pillH + g : 0), B);
+      fits = P >= 88 && b >= 48 && pillW >= 56;
+      if (fits) {
+        place(pad, lx0 + (lx1 - lx0 - P) / 2, B - P, P, P);
+      } else {
+        // No room beside the picture: usual sizes, over its edges.
+        P = Math.min(140, H * 0.4);
+        place(pad, L, B - P, P, P);
+        place(menu, L, T, 72, pillH);
+        place(start, L + 72 + g, T, 72, pillH);
+        if (hasFs) place(fs, R - 96, T, 96, pillH);
+        var bb = Math.min(68, H * 0.18);
+        place(fire, R - bb, B - bb - bb * 0.35, bb, bb);
+        place(jump, R - 2 * bb - g, B - bb, bb, bb);
+        place(special, R - bb * 0.85, B - 2 * bb - g - bb * 0.35, bb * 0.85, bb * 0.85);
+      }
+    }
+    touchUi.classList.toggle('overlap', !fits);
   }
 
   if (typeof ResizeObserver !== 'undefined') {
@@ -295,7 +395,11 @@
   }
   var fsBtn = document.getElementById('fs-btn');
   if (!(stage.requestFullscreen || stage.webkitRequestFullscreen)) fsBtn.hidden = true;
-  function updateFsButton() { fsBtn.textContent = isFullscreen() ? 'Exit fullscreen' : 'Fullscreen'; }
+  function updateFsButton() {
+    fsBtn.textContent = isFullscreen() ? 'Exit fullscreen' : 'Fullscreen';
+    document.getElementById('t-fs').textContent = isFullscreen() ? 'Exit full' : 'Fullscreen';
+  }
+  document.getElementById('t-fs').addEventListener('click', toggleFullscreen);
   document.addEventListener('fullscreenchange', updateFsButton);
   document.addEventListener('webkitfullscreenchange', updateFsButton);
 
@@ -443,22 +547,20 @@
   var ARROWS = { up: 0x40000052, down: 0x40000051, left: 0x40000050, right: 0x4000004F };
   var P1 = { up: 0, down: 1, left: 2, right: 3, fire: 4, jump: 5, special: 6 };
 
-  // The keys for one on-screen action: the arrow (for menus) and the player 1
-  // binding for directions, the player 1 binding for buttons.
+  // The key for one on-screen action. Directions and buttons send the
+  // player 1 key, which both the game and its menus read (every menu checks
+  // the arrows OR the player 1 key). A direction whose player 1 key is not
+  // set falls back to the arrow, so the menus still work. One key per
+  // action, so player 2 never moves too when bound to the arrows.
   function actionKeys(act, codes) {
-    var sdl = [];
-    if (act === 'menu') sdl = [27];
-    else if (act === 'start') sdl = [13];
+    var k = null;
+    if (act === 'menu') k = domKey(27);
+    else if (act === 'start') k = domKey(13);
     else {
-      if (ARROWS[act]) sdl.push(ARROWS[act]);
-      if (codes && act in P1) sdl.push(codes[P1[act]]);
+      if (codes && act in P1) k = domKey(codes[P1[act]]);
+      if (!k && ARROWS[act]) k = domKey(ARROWS[act]);
     }
-    var out = [], seen = {};
-    sdl.forEach(function (s) {
-      var k = domKey(s);
-      if (k && !seen[k.code]) { seen[k.code] = 1; out.push(k); }
-    });
-    return out;
+    return k ? [k] : [];
   }
 
   var held = {};  // DOM code -> number of fingers holding it
@@ -562,10 +664,9 @@
     var show = touchMode && running && !failed && help.hidden;
     if (!show && !touchUi.hidden) releaseAll();
     touchUi.hidden = !show;
-    rotateHint.hidden = !(touchMode && innerHeight > innerWidth && overlay.hidden);
   }
   window.addEventListener('touchstart', function () {
-    if (!touchMode) { touchMode = true; updateTouchUi(); updateStart(); }
+    if (!touchMode) { touchMode = true; layout(); updateStart(); }
   }, { capture: true, passive: true });
 
   // ---- Loading and start ----------------------------------------------------
@@ -660,6 +761,29 @@
   }
   retryBtn.addEventListener('click', function () { location.reload(); });
 
+  // A crash in the game (a WebAssembly trap such as an out-of-bounds memory
+  // access, or an exception thrown through the game's code) does not go
+  // through abort(), so catch it here instead of leaving a frozen picture.
+  var MSG_STOPPED = 'Sorry, the game stopped because of an error. Reload to play again.';
+  var MSG_NOSTART = 'Sorry, the game could not start: its program did not load, or this ' +
+                    'browser could not run it. Check your connection and reload.';
+  function fromGame(err, filename) {
+    if (typeof WebAssembly !== 'undefined' && err instanceof WebAssembly.RuntimeError) return true;
+    var where = (err && err.stack || '') + ' ' + (filename || '');
+    return /blipblop\.(?:[0-9a-f]+\.)?(?:js|wasm)/.test(where) || /wasm-function/.test(where);
+  }
+  function crashed(err) {
+    if (failed) return;
+    console.error('Game crashed:', err);
+    fail(running ? MSG_STOPPED : MSG_NOSTART);
+  }
+  window.addEventListener('error', function (e) {
+    if (fromGame(e.error, e.filename)) crashed(e.error || e.message);
+  });
+  window.addEventListener('unhandledrejection', function (e) {
+    if (fromGame(e.reason)) crashed(e.reason);
+  });
+
   window.Module = {
     canvas: canvas,
     preRun: [function () {
@@ -688,17 +812,14 @@
     },
     onAbort: function (what) {
       console.error('Game aborted:', what);
-      fail(running
-        ? 'Sorry, the game stopped because of an error. Reload to play again.'
-        : 'Sorry, the game could not start: its program did not load, or this browser ' +
-          'could not run it. Check your connection and reload.');
+      fail(running ? MSG_STOPPED : MSG_NOSTART);
     },
     onRuntimeInitialized: function () {
       running = true;
       overlay.hidden = true;
       canvas.focus();
       wake();
-      updateTouchUi();
+      layout();
     },
     print: function (t) { console.log(t); },
     printErr: function (t) { console.warn(t); }

@@ -177,6 +177,8 @@
         delete files[name];
       });
       removeRunDependency('game-data');
+    }).catch(function () {
+      // Already reported through onDataError; the game does not start.
     });
   });
 })();

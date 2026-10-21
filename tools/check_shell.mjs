@@ -113,7 +113,7 @@ check(dataRequests === 0, 'second visit reads the data from the cache', `${dataR
 // never shown without it.
 const ctx2 = await browser.newContext();
 const page2 = await ctx2.newPage();
-await page2.route(/blipblop\.wasm/, r => r.fulfill({ status: 404, body: 'missing' }));
+await page2.route(/blipblop\.([0-9a-f]+\.)?wasm/, r => r.fulfill({ status: 404, body: 'missing' }));
 const seen = [];
 const poll2 = setInterval(async () => { try { seen.push(await page2.$eval('#status', e => e.textContent)); } catch {} }, 100);
 await page2.goto(url);
@@ -122,6 +122,29 @@ clearInterval(poll2);
 const msg = await page2.$eval('#status', e => e.textContent);
 check(/could not start/.test(msg) && !seen.includes('Ready.'), 'missing blipblop.wasm gives a friendly error', msg);
 await ctx2.close();
+
+// A crash while playing shows a message instead of a frozen picture: a
+// WebAssembly trap, and a plain exception thrown through the game's code
+// (both thrown from the harness frame hook, which the game calls at frame 200).
+for (const kind of ['RuntimeError', 'Error']) {
+  const ctx3 = await browser.newContext();
+  const page3 = await ctx3.newPage();
+  await page3.addInitScript(kind => {
+    window.bbHooks = {
+      bbEnv: { BB_FIXED_STEP_MS: 11, BB_DUMP_EVERY: 200 },
+      onFrame(n) {
+        if (n !== 200) return;
+        throw kind === 'RuntimeError' ? new WebAssembly.RuntimeError('memory access out of bounds')
+                                      : new Error('test exception in a game callback');
+      },
+    };
+  }, kind);
+  await page3.goto(url);
+  const shown = await page3.waitForSelector('#status.error', { timeout: 120000 }).then(() => true, () => false);
+  const text = shown ? await page3.$eval('#status', e => e.textContent) : '(nothing shown)';
+  check(shown && /stopped because of an error/.test(text), `a ${kind} during play shows an error`, text);
+  await ctx3.close();
+}
 
 await Promise.race([browser.close(), new Promise(r => setTimeout(r, 5000))]);
 console.log(failures ? `${failures} check(s) failed` : 'all checks passed');

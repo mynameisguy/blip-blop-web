@@ -105,17 +105,35 @@ check(overlapping.length === 0, 'touch controls stay outside the game picture',
       `picture ${layout.canvas.map(Math.round)}, overlapping: ${overlapping.join(' ') || 'none'}`);
 await fullShot('touch-1-playing');
 
-// Skip the intro, then press Start every 2 s: it opens the menu, picks
-// START GAME, START 1 PLAYER GAME and Blip, and starts the mission. (A press
-// that lands while a screen is still sliding in is ignored by the game, so
-// a few spare presses are included; Return does nothing in a level.)
+// Share of near-black pixels in a canvas screenshot. The title, intro,
+// menus and mission briefing are mostly black; a level is not.
+async function blackShare(png) {
+  return page.evaluate(async b64 => {
+    const bmp = await createImageBitmap(await (await fetch('data:image/png;base64,' + b64)).blob());
+    const c = new OffscreenCanvas(bmp.width, bmp.height);
+    const g = c.getContext('2d');
+    g.drawImage(bmp, 0, 0);
+    const d = g.getImageData(0, 0, bmp.width, bmp.height).data;
+    let black = 0;
+    for (let i = 0; i < d.length; i += 4) if (d[i] + d[i + 1] + d[i + 2] < 60) black++;
+    return black / (d.length / 4);
+  }, png.toString('base64'));
+}
+
+// Skip the intro, then press Start every 2 s until a level shows: it opens
+// the menu, picks START GAME, START 1 PLAYER GAME and Blip, and starts the
+// mission. (A press that lands while a screen is still sliding in is
+// ignored by the game, hence the retries; Return does nothing in a level.)
 await tap('#t-menu');
 await page.waitForTimeout(2000);
-for (let i = 0; i < 8; i++) {
+let inLevel = false;
+for (let i = 0; i < 16 && !inLevel; i++) {
   await tap('#t-start');
   await page.waitForTimeout(2000);
-  await canvasShot(`touch-2-step${i}`);
+  const share = await blackShare(await canvasShot(`touch-2-step${i}`));
+  inLevel = share < 0.15;
 }
+check(inLevel, 'reached a level with the touch controls only');
 await page.waitForTimeout(2000);
 const before = await canvasShot('touch-5-before');
 
@@ -133,7 +151,7 @@ await page.waitForTimeout(1200);
 const after = await canvasShot('touch-7-held');
 await touch('touchEnd', []);
 await page.waitForTimeout(300);
-check(heldNow.includes('ArrowRight') && heldNow.includes('KeyX'),
+check(heldNow.join() === 'ArrowRight,KeyX',
       'right and Fire held together send ArrowRight and the player 1 Fire key', heldNow.join(' '));
 check(!before.equals(after), 'the game picture changes while moving and firing');
 check(Object.keys(await page.evaluate(() => window.__down)).length === 0, 'all keys released after lifting both fingers');

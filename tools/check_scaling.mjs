@@ -8,7 +8,10 @@
 // When even 1x does not fit, the page must scale down to fit instead: then
 // the picture must be the whole frame, centred, 4:3, fully on screen, close
 // to the frame (smooth scaling cannot be exact), and the margins black.
-// Page controls (toolbar, touch controls) are hidden for the screenshot.
+// The toolbar is hidden for the screenshot (it fades out on its own once the
+// mouse is still, but timers are held while the frame is frozen). Touch
+// controls are not shown here: tools/check_touch.mjs checks they stay off
+// the picture.
 //
 //   node tools/check_scaling.mjs <url> [options]
 //     --frame N          frame to compare (default 600)
@@ -211,8 +214,8 @@ for (const dpr of dprs) {
       await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
       await page.waitForTimeout(300);
       const overlayShown = await page.evaluate(() => !document.getElementById('overlay').hidden);
-      // Page controls are not part of the picture; hide them for the shot.
-      const hide = await page.addStyleTag({ content: '#toolbar, #touch, #rotate { visibility: hidden !important; }' });
+      // The toolbar is not part of the picture; hide it for the shot.
+      const hide = await page.addStyleTag({ content: '#toolbar { visibility: hidden !important; }' });
       await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
       const png = await page.screenshot({ animations: 'disabled', caret: 'initial' });
       const shot = decodePng(png);

@@ -41,16 +41,23 @@ mute audio until the first click, tap or key press, the game starts on that
 gesture, so the music plays from the first frame.
 
 On touch devices the page shows on-screen controls (pad, Fire, Jump,
-Special, Menu, Start) in the margins beside the picture. They send the
-player 1 keys the game is set to (read from the game), plus the arrows and
-Return for the menus.
+Special, Menu, Start), sized to fit the margins beside the picture (held
+sideways) or the space below it (held upright, with the picture at the top).
+They send the player 1 keys the game is set to (read from the game; the menus
+read those too), with the arrows as a fallback, and Return/Escape.
+
+`web/build.sh` names `blipblop.js`, the `.wasm` and the data manifest by
+content hash, so after a deploy a browser never mixes cached old and new files.
 
 - `tools/check_scaling.mjs <url> --fullscreen` compares whole screenshots at
   800x600, 1366x768 and 1920x1080 with the harness framebuffer: the frame
   scaled NxN, centred, uncropped, every other pixel black (`--dpr 1,2,3`
   adds device pixel ratios, `--css` injects CSS to see it fail).
 - `tools/check_shell.mjs <url>` checks loading, the start gesture, audio,
-  keyboard and focus handling, error messages and the cache.
+  keyboard and focus handling, error messages (including a crash during
+  play) and the cache.
+- `tools/check_touch_layout.mjs <url>` checks the touch controls stay off the
+  picture on common phones (and only overlap it, faintly, on a tablet).
 - `tools/check_touch.mjs <url> [outdir] --cfg` plays to the first level on an
   emulated phone with the touch controls (`--cfg` serves a bb.cfg with valid
   default keys).
