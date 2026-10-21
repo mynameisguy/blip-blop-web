@@ -239,11 +239,14 @@ document.addEventListener('visibilitychange', function () {
 // count. Hand SDL (which listens after us) a copy of the pad at rest, with
 // an older timestamp so its next poll compares against the real state and
 // reports the pressed button and pushed stick.
+// The copy's name starts with the pad's Gamepad API index ("#1 ..."), which
+// the game uses as the pad's JOYn slot (Input::webAddJoystick), so pads keep
+// their bindings whatever order they are pressed in after a reload.
 addEventListener('gamepadconnected', function (e) {
   var pad = e.gamepad;
   if (!pad) return;
   var rest = {
-    id: pad.id,
+    id: (pad.index >= 0 && pad.index <= 9 ? '#' + pad.index + ' ' : '') + pad.id,
     index: pad.index,
     connected: pad.connected,
     mapping: pad.mapping,
@@ -259,8 +262,9 @@ addEventListener('gamepadconnected', function (e) {
 // Keep the browser from acting on game keys (Space and arrows scrolling,
 // Backspace, Firefox quick find on ' and /, Alt opening the menu bar, Space
 // or Enter pressing a page button that still has focus after a click). SDL
-// still gets the events. Shortcuts with Ctrl or Meta, and typing into text
-// fields, keep their usual behaviour.
+// still gets the events. Typing into text fields is left alone, and so are
+// keys with Ctrl or Meta here; SDL itself still blocks most Ctrl shortcuts,
+// but the ones browsers reserve (Ctrl+W, Ctrl+T, Ctrl+N) cannot be blocked.
 ['keydown', 'keyup'].forEach(function (type) {
   addEventListener(type, function (e) {
     if (e.ctrlKey || e.metaKey) return;

@@ -59,6 +59,12 @@ void load_BB3_config(const char * cfg_file)
 		fread(&vSyncOn, sizeof(vSyncOn), 1, fic);
 		fread(&fullscreen, sizeof(fullscreen), 1, fic);
 		fread(&lang_type, sizeof(lang_type), 1, fic);
+#ifdef __EMSCRIPTEN__
+		// A damaged save can hold any byte in these bools (a 2 made VSYNC
+		// impossible to turn off): read them as bytes, keep 0 or 1.
+		vSyncOn = *(unsigned char *)&vSyncOn != 0;
+		fullscreen = *(unsigned char *)&fullscreen != 0;
+#endif
 
 		fread(&a, sizeof(a), 1, fic);
 		in.setAlias(ALIAS_P1_UP, a);

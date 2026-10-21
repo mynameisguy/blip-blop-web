@@ -6,6 +6,17 @@ import fs from 'node:fs';
 
 export const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+// Waits `ms`, and also until the game has drawn at least `frames` frames
+// (default: one per 20 ms). Gamepads are polled once a frame, so a press
+// released before the game drew a frame would never be seen; on a loaded
+// machine the game can stall for a few hundred ms.
+export async function pause(page, ms, frames = Math.ceil(ms / 20)) {
+  const f0 = await page.evaluate(() => window.bbFrames);
+  await sleep(ms);
+  const end = Date.now() + 5000;
+  while (Date.now() < end && await page.evaluate(() => window.bbFrames) < f0 + frames) await sleep(10);
+}
+
 // Set by setup(): the browser, the game's URL and where to save screenshots.
 const driver = { browser: null, url: null, outDir: null };
 
@@ -234,33 +245,45 @@ export async function startGame(page, players = 1) {
 //  - player: centroid of Blip's saturated blue pixels;
 //  - blop: centroid of Blop's salmon red pixels near the ground, away from
 //    Blip (whose bandana is red too).
+// Sprites are found as the densest 48 px wide band of their colour, so that
+// scattered pixels of the same colour in the scenery barely move them.
 export async function grab(page, name) {
   const r = await page.evaluate(() => new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('no frame within 10 s')), 10000);
     window.bbGrab = ({ pixels, pitch }) => {
       clearTimeout(timer);
-      const px = (x, y) => { const i = y * pitch + x * 4; return [pixels[i], pixels[i + 1], pixels[i + 2]]; };
+      const W = 48;
+      const sprite = (y0, y1, test, skip) => {
+        const cols = new Array(640).fill(0), sumY = new Array(640).fill(0);
+        for (let y = y0; y < y1; y++) {
+          for (let x = 0; x < 640; x++) {
+            if (skip && skip(x)) continue;
+            const i = y * pitch + x * 4;
+            if (test(pixels[i], pixels[i + 1], pixels[i + 2])) { cols[x]++; sumY[x] += y; }
+          }
+        }
+        let best = -1, bestN = 0, run = 0;
+        for (let x = 0; x < 640; x++) {
+          run += cols[x] - (x >= W ? cols[x - W] : 0);
+          if (run > bestN) { bestN = run; best = x - W + 1; }
+        }
+        if (bestN < 20) return null;
+        let n = 0, sx = 0, sy = 0;
+        for (let x = Math.max(0, best); x < best + W; x++) { n += cols[x]; sx += cols[x] * x; sy += sumY[x]; }
+        return { n, x: sx / n, y: sy / n };
+      };
       const ground = new Array(640).fill(0);
-      let n = 0, sx = 0, sy = 0;
-      for (let y = 0; y < 480; y++) {
+      for (let y = 300; y < 470; y++) {
         for (let x = 0; x < 640; x++) {
-          const [r, g, b] = px(x, y);
-          if (y >= 300 && y < 470) ground[x] += (r + g + b) / 3;
-          // Blip's body; the HUD (y < 80) also has blue digits.
-          if (y >= 80 && b > 150 && b > r + 100 && b > g + 70) { n++; sx += x; sy += y; }
+          const i = y * pitch + x * 4;
+          ground[x] += (pixels[i] + pixels[i + 1] + pixels[i + 2]) / 3;
         }
       }
-      const blipX = n ? sx / n : -1000;
-      let rn = 0, rx = 0;
-      for (let y = 300; y < 480; y++) {
-        for (let x = 0; x < 640; x++) {
-          if (Math.abs(x - blipX) < 35) continue;
-          const [r, g, b] = px(x, y);
-          if (r > 190 && g >= 40 && g < 130 && b >= 30 && b < 120 && r - g > 90) { rn++; rx += x; }
-        }
-      }
-      resolve({ ground: ground.map(v => v / 170), player: n ? { n, x: blipX, y: sy / n } : null,
-                blop: rn ? { n: rn, x: rx / rn } : null });
+      // Blip's body; the HUD (y < 80) also has blue digits.
+      const player = sprite(80, 480, (r, g, b) => b > 150 && b > r + 100 && b > g + 70);
+      const blop = sprite(300, 480, (r, g, b) => r > 190 && g >= 40 && g < 130 && b >= 30 && b < 120 && r - g > 90,
+        player ? x => Math.abs(x - player.x) < 35 : null);
+      resolve({ ground: ground.map(v => v / 170), player, blop });
     };
   }));
   if (driver.outDir && name) await screenshot(page, name);
@@ -268,10 +291,11 @@ export async function grab(page, name) {
 }
 
 // Horizontal scroll from frame a to frame b, in pixels (positive: the view
-// moved right, so the scenery moved left on screen).
-export function scroll(a, b) {
+// moved right, so the scenery moved left on screen). Only reliable for
+// small steps; track() adds up steps.
+export function scroll(a, b, range = 160) {
   let best = 0, bestErr = Infinity;
-  for (let s = -160; s <= 160; s++) {
+  for (let s = -range; s <= range; s++) {
     let err = 0, n = 0;
     for (let x = 160; x < 480; x++) { err += Math.abs(a.ground[x] - b.ground[x - s]); n++; }
     err /= n;
@@ -284,6 +308,65 @@ export function scroll(a, b) {
 // passes the middle of the screen, so count the scroll and the move on screen.
 export const walked = (a, b) => scroll(a, b) + (a.player && b.player ? b.player.x - a.player.x : NaN);
 export const fmt = v => (Number.isFinite(v) ? v.toFixed(1) : String(v));
+
+// Samples frames every ~80 ms for `ms` while `act` runs (if given) and
+// measures how far Blip ('player') and Blop moved through the level: the
+// scroll summed over the small steps between samples, plus the move on
+// screen. rise is the highest Blip got above where he was first seen (a
+// foreground bush can hide him in the first samples); seen counts the
+// samples he was visible in.
+export async function track(page, ms, act) {
+  const first = await grab(page);
+  let prev = first, scrolled = 0, rise = 0, groundY = first.player ? first.player.y : null, seen = first.player ? 1 : 0;
+  // Each sprite's position in the level (scroll so far + x on screen) in
+  // every sample where it was visible: the foreground bushes, or the other
+  // player, can hide it for a while.
+  const pos = { player: [], blop: [] };
+  const see = g => {
+    for (const who of ['player', 'blop']) {
+      if (g[who]) pos[who].push(scrolled + g[who].x);
+    }
+  };
+  see(first);
+  const done = act ? act() : null;
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    await sleep(80);
+    const g = await grab(page);
+    scrolled += scroll(prev, g, 40);
+    see(g);
+    if (g.player) {
+      seen++;
+      if (groundY === null) groundY = g.player.y;
+      rise = Math.max(rise, groundY - g.player.y);
+    }
+    prev = g;
+  }
+  await done;
+  const moved = who => (pos[who].length ? pos[who][pos[who].length - 1] - pos[who][0] : NaN);
+  // The idle animation shifts a sprite's centre back and forth by up to
+  // 4.4 px, so for "did it stay put" compare the mean position over the
+  // second half of the samples with the mean over the first half.
+  const drift = who => {
+    const p = pos[who], h = Math.floor(p.length / 2);
+    if (h < 2) return NaN;
+    const mean = a => a.reduce((x, y) => x + y, 0) / a.length;
+    return mean(p.slice(p.length - h)) - mean(p.slice(0, h));
+  };
+  return {
+    moved: moved('player'), blopMoved: moved('blop'), drift: drift('player'), blopDrift: drift('blop'),
+    scrolled, rise, seen, first, last: prev,
+  };
+}
+
+// The camera keeps moving for a moment after the player stops: lets it
+// settle (a second, and at least 50 game frames), then measures how far the
+// player drifted over the next second (~0 when standing; a stuck key walks
+// well over 100 px in that time).
+export async function still(page, who = 'drift') {
+  await pause(page, 1000, 50);
+  return (await track(page, 1000))[who];
+}
 
 // Sends a window blur, as when the player switches tab or window, then
 // gives focus back.
@@ -308,23 +391,37 @@ export async function bind(page, offset, press, expected, what, tries = 4) {
     await press();
     const end = Date.now() + 1500;
     while (Date.now() < end) {
-      if (await cfgAlias(page, offset) === expected) return expected;
+      if (await cfgAlias(page, offset) === expected) {
+        await bindDone(page);
+        return expected;
+      }
       await sleep(100);
     }
   }
   return cfgAlias(page, offset);
 }
+
+// After a binding the menu waits until every key and pad input is up before
+// it draws again; until then a key press would be swallowed.
+async function bindDone(page) {
+  const s0 = await state(page);
+  if (!await waitState(page, s => s.title && s.frame > s0.frame + 3, 5000)) {
+    throw new StepError(`the keys menu did not come back after a binding; the game shows ${describe(await state(page))}`);
+  }
+}
 // data/bb.cfg: vsync, fullscreen (1 byte each), language (int), then the
 // keys as ints: P1 UP, DOWN, LEFT, RIGHT, FIRE, JUMP, SPECIAL, then P2.
 export const P1_UP = 6, P1_RIGHT = 18, P1_JUMP = 26;
+export const P2_UP = 34, P2_RIGHT = 46, P2_JUMP = 54;
 
-// Main menu -> OPTIONS -> PLAYER 1 CONTROL, with UP focused.
-export async function toKeysMenu(page) {
+// Main menu -> OPTIONS -> PLAYER n CONTROL, with UP focused.
+export async function toKeysMenu(page, player = 1) {
   await menuKey(page, 'ArrowDown', 'OPTIONS');
   await menuKey(page, 'Enter', 'the options menu');
   await menuKey(page, 'ArrowDown', 'TOGGLE FULLSCREEN');
   await menuKey(page, 'ArrowDown', 'PLAYER 1 CONTROL');
-  await menuKey(page, 'Enter', 'the P1 keys menu');
+  if (player === 2) await menuKey(page, 'ArrowDown', 'PLAYER 2 CONTROL');
+  await menuKey(page, 'Enter', `the P${player} keys menu`);
 }
 // Keys menu with entry `from` focused -> RETURN -> main menu (OPTIONS
 // focused) -> START GAME focused.

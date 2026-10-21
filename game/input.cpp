@@ -220,15 +220,27 @@ void Input::webAddJoystick(int device)
 		return;
 	}
 
-	int k = 0;
-	while (k < MAX_JOY && js[k].handle != NULL)
-		k++;
+	// web/pre.js prefixes the name of a pad with its Gamepad API index
+	// ("#1 ..."). Use it as the slot, so each physical pad keeps its JOYn
+	// number (and its bindings) whatever order the pads are pressed in.
+	const char * name = SDL_JoystickName(j);
+	int k = -1;
+	if (name && name[0] == '#' && name[1] >= '0' && name[1] <= '9' && name[2] == ' ') {
+		int wanted = name[1] - '0';
+		if (wanted < MAX_JOY && js[wanted].handle == NULL)
+			k = wanted;
+		name += 3;
+	}
+	if (k < 0) {
+		k = 0;
+		while (k < MAX_JOY && js[k].handle != NULL)
+			k++;
+	}
 	if (k == MAX_JOY) {
 		SDL_JoystickClose(j);
 		return;
 	}
 
-	const char * name = SDL_JoystickName(j);
 	memset(&js[k], 0, sizeof(js[k]));
 	web_hat[k] = 0;
 	js[k].handle = j;
@@ -739,7 +751,9 @@ int Input::scanKey(unsigned int k) const
 
 		return z;
 	}*/
-	if ((k >> 10) & 0xFF > 0)
+	// Was "(k >> 10) & 0xFF > 0", which C++ reads as "(k >> 10) & 1": the
+	// codes of joysticks 2 and 4 then fell through to the keyboard below.
+	if (((k >> 10) & 0xFF) > 0)
 	{
 		/*
 		REMEMBER
@@ -748,11 +762,10 @@ int Input::scanKey(unsigned int k) const
 		int	j = k >> 10 & 0xFF;
 		int b = k & 0xFF;
 
-#ifdef __EMSCRIPTEN__
-		// A binding read from a saved config may name any joystick.
+		// Now that every joystick number gets here, keep a binding read
+		// from a damaged config inside js[].
 		if (j > MAX_JOY || b >= (int)sizeof(js[0].buttons))
 			return 0;
-#endif
 
 		if (b == JOY_UP)
 			return js[j - 1].directions.up;
