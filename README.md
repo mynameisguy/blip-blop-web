@@ -40,20 +40,43 @@ On a touch device held upright the picture instead fills the screen width
 frame is copied with nearest-neighbour onto a canvas k times the game size
 (k = the smallest whole factor at or above the target), which the browser
 then scales down smoothly, so every game pixel row and column gets the same
-width and only edges blend. Held sideways, and on desktops, the exact whole
-factor applies.
+width and only edges blend. Held sideways, the picture fills the screen
+height (4:3, centred), drawn the same way. On desktops and other devices
+without touch, the exact whole factor applies.
 The game data (about 115 MB) downloads with a progress bar and is kept in
 the browser's Cache API, so later visits load it from disk. Because browsers
 mute audio until the first click, tap or key press, the game starts on that
 gesture, so the music plays from the first frame.
 
-On touch devices the page shows on-screen controls (pad, Fire, Jump,
-Special, Menu, Start), sized to fit the margins beside the picture (held
-sideways) or the space below it (held upright, with the picture at the top).
-They send the player 1 keys the game is set to (read from the game; the menus
-read those too), with the arrows as a fallback, and Return/Escape. Fire and
-Jump sit side by side, or diagonally in a narrow margin, and a touch on the
-spot between them presses both.
+On touch devices the first tap also enters fullscreen and, where the browser
+allows it (Android), locks the screen sideways. An iPhone has no fullscreen
+for pages: there the start screen suggests Add to Home Screen, and the web
+app manifest (`web/manifest.webmanifest`) opens the game from the home screen
+fullscreen and sideways.
+
+On touch devices the page also shows on-screen controls that change with
+what the game shows (the game reports it through `bb_ui_mode()`,
+`game/web_ui.h`; browser build only, nothing drawn changes):
+
+- in menus: big up/down/left/right arrows and OK; a swipe on the picture is
+  an arrow key and a tap is Return;
+- in the intro, cutscenes, dialogue and the mission briefing: Skip (Escape,
+  or Return for the briefing's "press a key"); a tap is Return;
+- in a level: a floating stick (it appears where the left thumb lands, has a
+  dead zone, gives 8 directions with hysteresis and follows the thumb), Fire,
+  Jump and Special (64 px or more), a pause button and an auto-fire toggle.
+  Auto-fire holds Fire down, which the game turns into continuous shooting;
+  it is let go outside levels, and remembered in `localStorage`.
+
+Held sideways the controls sit over the picture's lower corners and in the
+margins beside it; held upright, below the picture. They never cover the HUD
+along the top of the picture. They send the player 1 keys the game is set to
+(read from the game; the menus read those too), with the arrows (directions)
+or the default keys (buttons) as a fallback; the menu arrows send the arrow
+keys. A touch on the spot between Fire and Jump presses both. Every key they
+hold is let go when a finger lifts or slides off, a touch is cancelled, the
+window loses focus, the page is hidden or the set of controls changes.
+Presses vibrate briefly where the browser supports it.
 
 `web/build.sh` names `blipblop.js`, the `.wasm` and the data manifest by
 content hash, so after a deploy a browser never mixes cached old and new files.
@@ -67,16 +90,24 @@ if that names a different program, reloads once into the new version
   whose picture reaches all four edges): the frame scaled NxN, centred,
   uncropped, every other pixel black (`--dpr 1,2,3`
   adds device pixel ratios, `--css` injects CSS to see it fail). `--touch`
-  runs as a phone: upright, the picture must fill the width at the top.
+  runs as phones and a tablet: upright, the picture must fill the width at
+  the top; sideways, the height, centred.
 - `tools/check_shell.mjs <url>` checks loading, the start gesture, audio,
   keyboard and focus handling, error messages (including a crash during
   play) and the cache.
-- `tools/check_touch_layout.mjs <url>` checks the touch controls stay off the
-  picture on common phones (and only overlap it, faintly, on a tablet), and
-  that upright the picture fills the width, drawn sharp-bilinear.
-- `tools/check_touch.mjs <url> [outdir] --cfg` plays to the first level on an
-  emulated phone with the touch controls (`--cfg` serves a bb.cfg with valid
-  default keys).
+- `tools/check_touch_layout.mjs <url> [outdir]` checks, on common phones and
+  tablets and for each set of controls, that no control covers the HUD,
+  overlaps another or leaves the screen, the button sizes, the picture's
+  size and sharp-bilinear drawing, and the stick's keys.
+- `tools/check_touch.mjs <url> [outdir] [--device WxH@R]` plays on an
+  emulated phone with the touch controls alone, tracking Blip in the
+  harness frames: fullscreen on the first tap, Skip, menus by taps and
+  swipes from the title to level 1, the stick in all 8 directions (dead
+  zone, hysteresis, following the thumb, stopping on release), Jump,
+  auto-fire (continuous bullets, let go in the pause menu, remembered),
+  pause, and that nothing stays held after multi-touch chaos, cancelled
+  touches, blur and a hidden page. It saves screenshots of a menu and a
+  level, lying down and upright.
 
 ## Pixel comparison
 

@@ -8,6 +8,7 @@
 #include "control_alias.h"
 #include "input.h"
 #include "key_translator.h"
+#include "web_ui.h"
 
 // The current key bindings, named as the Options > Keys menu names them:
 // "<alias>=<key name>" lines for both players. The page shows them in its
@@ -53,5 +54,13 @@ extern "C" EMSCRIPTEN_KEEPALIVE const char* bb_key_codes() {
     }
     return out.c_str();
 }
+
+// What the game is showing (BB_UI_* in web_ui.h): the page shows menu
+// controls, level controls or a Skip button to match. The game sets it
+// where it enters and leaves a level, the pause menu, a cutscene, a
+// dialogue scene and the briefing's "press a key" wait.
+int bb_web_ui_mode = BB_UI_MENU;
+
+extern "C" EMSCRIPTEN_KEEPALIVE int bb_ui_mode() { return bb_web_ui_mode; }
 
 #endif

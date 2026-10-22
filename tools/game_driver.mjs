@@ -30,6 +30,11 @@ export async function setup(url, outDir) {
   });
 }
 
+// A new browser context (e.g. an emulated phone) for newGamePage().
+export function newContext(options) {
+  return driver.browser.newContext(options);
+}
+
 let failures = 0;
 export function check(ok, what, detail = '') {
   console.log(`${ok ? 'PASS' : 'FAIL'} ${what}${detail ? ' - ' + detail : ''}`);

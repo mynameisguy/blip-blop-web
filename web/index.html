@@ -4,6 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Blip &amp; Blop</title>
+<!-- Added to a phone's home screen, the game opens full screen and sideways
+     (the only full screen an iPhone offers a web page). -->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Blip'n Blop">
+<meta name="theme-color" content="#000000">
+<link rel="apple-touch-icon" href="icon-192.png">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%23000'/%3E%3Ccircle cx='8' cy='8' r='5' fill='%23ffcc33'/%3E%3C/svg%3E">
 <style>
   :root {
@@ -97,45 +106,63 @@
   #help .close { float: right; }
   #help td.note { padding-top: 8px; color: var(--dim); }
 
-  /* Touch controls: semi-transparent, in the margins beside the picture on a
-     phone held sideways. */
+  /* Touch controls (layoutTouch() places and sizes them). They change with
+     what the game shows (data-mode): a floating stick and Fire / Jump /
+     Special in a level, arrows and OK in menus, Skip in cutscenes. They are
+     semi-transparent and may cover the picture's lower corners, never the
+     HUD along its top. */
   #touch {
     position: absolute; inset: 0; z-index: 2; pointer-events: none;
     -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
   }
-  #touch > * { pointer-events: auto; touch-action: none; position: absolute; }
-  /* layoutTouch() places and sizes these to fit the free space beside (or,
-     in portrait, below) the picture. */
-  #dpad {
-    border-radius: 50%;
-    background: rgba(255, 255, 255, .07); border: 1px solid rgba(255, 255, 255, .2);
+  #touch > * { pointer-events: auto; touch-action: none; position: absolute; box-sizing: border-box; }
+  #touch .lvl, #touch .menu, #touch .scene { display: none; }
+  #touch[data-mode="level"] .lvl, #touch[data-mode="menu"] .menu,
+  #touch[data-mode="scene"] .scene { display: flex; }
+  /* Taps and swipes on the picture (menus and cutscenes), under the buttons. */
+  #gesture { left: 0; top: 0; width: 100%; height: 100%; }
+  /* In a level the stick appears where the left thumb lands in this zone. */
+  #stick {
+    pointer-events: none; border-radius: 50%;
+    background: rgba(255, 255, 255, .08); border: 2px solid rgba(255, 255, 255, .3);
   }
-  #dpad span {
-    position: absolute; width: 0; height: 0; border: 12px solid transparent; opacity: .55;
+  #touch #stick { pointer-events: none; }
+  #stick.idle { opacity: .45; }
+  #stick-knob {
+    position: absolute; border-radius: 50%; left: 50%; top: 50%;
+    background: rgba(255, 255, 255, .3); border: 2px solid rgba(255, 255, 255, .55);
+    box-sizing: border-box;
   }
-  #dpad span.on { opacity: 1; }
-  #dpad .u { left: calc(50% - 12px); top: 9%; border-bottom: 16px solid #fff; border-top-width: 0; }
-  #dpad .d { left: calc(50% - 12px); bottom: 9%; border-top: 16px solid #fff; border-bottom-width: 0; }
-  #dpad .l { top: calc(50% - 12px); left: 9%; border-right: 16px solid #fff; border-left-width: 0; }
-  #dpad .r { top: calc(50% - 12px); right: 9%; border-left: 16px solid #fff; border-right-width: 0; }
+  #stick.on #stick-knob { background: rgba(255, 204, 51, .5); border-color: var(--accent); }
   .tbtn {
     display: flex; align-items: center; justify-content: center;
-    border-radius: 50%; color: rgba(255, 255, 255, .85); font-size: 13px; font-weight: 600;
-    background: rgba(255, 255, 255, .1); border: 1px solid rgba(255, 255, 255, .28);
-    box-sizing: border-box; padding: 0;
+    border-radius: 50%; color: rgba(255, 255, 255, .9); font-size: 15px; font-weight: 600;
+    background: rgba(255, 255, 255, .12); border: 1px solid rgba(255, 255, 255, .35);
+    padding: 0; text-shadow: 0 1px 2px #000;
   }
   .tbtn.on { background: rgba(255, 204, 51, .45); border-color: var(--accent); }
-  #t-special { font-size: 11px; }
-  .tbtn.pill { border-radius: 22px; font-size: 13px; height: 44px; }
+  .tbtn.small { font-size: 11px; border-radius: 12px; }
+  .tbtn.pill { border-radius: 32px; font-size: 16px; }
+  #t-special { font-size: 13px; }
+  /* Auto-fire: lit while on. */
+  #t-auto.on { background: rgba(255, 204, 51, .35); border-color: var(--accent); color: #fff; }
+  /* Pause: two bars. */
+  #t-pause::before, #t-pause::after {
+    content: ''; width: 5px; height: 16px; margin: 0 2.5px; background: rgba(255, 255, 255, .9);
+  }
+  /* Menu arrows: a triangle each. */
+  .tbtn.arrow { border-radius: 14px; }
+  .tbtn.arrow i { width: 0; height: 0; border: 13px solid transparent; }
+  .arrow.up i { border-bottom: 18px solid #fff; border-top-width: 0; }
+  .arrow.down i { border-top: 18px solid #fff; border-bottom-width: 0; }
+  .arrow.left i { border-right: 18px solid #fff; border-left-width: 0; }
+  .arrow.right i { border-left: 18px solid #fff; border-right-width: 0; }
   /* Between Fire and Jump: one thumb here presses both. */
   #t-both {
     border-radius: 50%; background: rgba(255, 255, 255, .06);
-    border: 1px dashed rgba(255, 255, 255, .25); box-sizing: border-box;
+    border: 1px dashed rgba(255, 255, 255, .25);
   }
   #t-both.on { background: rgba(255, 204, 51, .3); }
-  /* No room beside the picture (e.g. a tablet): the controls sit over it,
-     fainter. */
-  #touch.overlap > * { opacity: .45; }
   body.touch #toolbar { display: none; }
   #rotate {
     position: absolute; z-index: 2; white-space: nowrap;
@@ -148,15 +175,23 @@
   <canvas id="canvas" width="640" height="480" tabindex="0" oncontextmenu="event.preventDefault()"></canvas>
   <canvas id="view" width="640" height="480" hidden></canvas>
 
-  <div id="touch" hidden>
-    <div id="dpad" data-dpad><span class="u"></span><span class="d"></span><span class="l"></span><span class="r"></span></div>
-    <div class="tbtn pill" id="t-menu" data-act="menu">Menu</div>
-    <div class="tbtn pill" id="t-start" data-act="start">Start</div>
-    <button class="tbtn pill" id="t-fs" type="button" tabindex="-1">Fullscreen</button>
-    <div class="tbtn" id="t-special" data-act="special">Special</div>
-    <div class="tbtn" id="t-jump" data-act="jump">Jump</div>
-    <div class="tbtn" id="t-fire" data-act="fire">Fire</div>
-    <div id="t-both" data-act="fire jump" aria-label="Fire and Jump"></div>
+  <div id="touch" hidden data-mode="menu">
+    <div id="gesture" class="menu scene"></div>
+    <div id="stick-zone" class="lvl"></div>
+    <div id="stick" class="lvl idle"><div id="stick-knob"></div></div>
+    <div class="tbtn lvl" id="t-special" data-act="special">Special</div>
+    <div class="tbtn lvl" id="t-jump" data-act="jump">Jump</div>
+    <div class="tbtn lvl" id="t-fire" data-act="fire">Fire</div>
+    <div class="lvl" id="t-both" data-act="fire jump" aria-label="Fire and Jump"></div>
+    <div class="tbtn small lvl" id="t-pause" data-act="pause" aria-label="Pause"></div>
+    <div class="tbtn small lvl" id="t-auto" role="switch" aria-checked="false" aria-label="Auto-fire">AUTO</div>
+    <div class="tbtn arrow up menu" id="t-up" data-act="nav-up" aria-label="Up"><i></i></div>
+    <div class="tbtn arrow down menu" id="t-down" data-act="nav-down" aria-label="Down"><i></i></div>
+    <div class="tbtn arrow left menu" id="t-left" data-act="nav-left" aria-label="Left"><i></i></div>
+    <div class="tbtn arrow right menu" id="t-right" data-act="nav-right" aria-label="Right"><i></i></div>
+    <div class="tbtn menu" id="t-ok" data-act="ok">OK</div>
+    <div class="tbtn pill scene" id="t-skip" data-act="skip">Skip</div>
+    <button class="tbtn small" id="t-fs" type="button" tabindex="-1">Full</button>
   </div>
   <div id="rotate" hidden>Turn the phone sideways for a bigger picture</div>
 
@@ -180,8 +215,11 @@
            <kbd>Alt</kbd>+<kbd>Return</kbd> toggles fullscreen.</p>
       </div>
       <div class="keys touch-only">
-        <p>On-screen controls: the pad moves (and picks menu items), Start
-           confirms, Menu goes back or opens the game menu.</p>
+        <p>In menus, tap the picture or OK to choose and swipe or use the
+           arrows to move. In a level, put your left thumb down anywhere on
+           the left to steer; Fire, Jump and Special are on the right.</p>
+        <p id="ios-hint" hidden>For full screen on an iPhone, use Share ›
+           Add to Home Screen and start the game from there.</p>
       </div>
     </div>
   </div>
@@ -249,12 +287,18 @@
     }
     // A phone held upright: the picture goes at the top, as large as the
     // width allows, and the touch controls go in the space below it.
+    // Held sideways, the picture fills the screen height and the controls
+    // sit over its lower corners (and in the margins beside it).
     var portrait = touchMode && stage.clientHeight > stage.clientWidth;
-    var room = portrait ? Math.floor(dh * 0.62) : dh;
+    var sideways = touchMode && !portrait;
+    var ins = insets();
+    var room = portrait ? Math.floor(dh * 0.62)
+      : sideways ? Math.max(1, dh - Math.round((ins.top + ins.bottom) * dpr)) : dh;
     var n = Math.floor(Math.min(dw / 640, room / 480));
     var w, h, sharp = false;
-    if (portrait) {
-      // Upright phone: fill the width (4:3), even at a non-integer scale.
+    if (portrait || sideways) {
+      // Touch device: fill the width (upright) or the height (sideways),
+      // 4:3, even at a non-integer scale.
       w = Math.max(1, Math.min(dw, Math.floor(room * 4 / 3)));
       h = Math.max(1, Math.round(w * 3 / 4));
       if (w % 640 === 0 && h === w * 3 / 4) n = w / 640;  // happens to be exact
@@ -272,7 +316,8 @@
       canvas.classList.add('smooth');
     }
     var left = snap((dw - w) / 2, dpr);
-    var top = portrait ? snap(insets().top * dpr, dpr) : snap((dh - h) / 2, dpr);
+    var top = portrait ? snap(ins.top * dpr, dpr)
+      : sideways ? snap(ins.top * dpr + (room - h) / 2, dpr) : snap((dh - h) / 2, dpr);
     // The size is set in device pixels and scaled down by the ratio with a
     // transform: a CSS width such as 640 * 2 / 1.1 px cannot be stored
     // exactly, a transform can.
@@ -281,7 +326,7 @@
     canvas.style.transform = 'translate(' + Math.round(left / dpr) + 'px,' +
       Math.round(top / dpr) + 'px) scale(' + (1 / dpr) + ')';
     canvas.dataset.scale = n >= 1 ? n : (w / 640).toFixed(3);
-    if (portrait && !sharp) canvas.classList.remove('smooth');
+    if ((portrait || sideways) && !sharp) canvas.classList.remove('smooth');
     setSharp(sharp, w, h, left, top, dpr);
     updateTouchUi();
     layoutTouch({ x: Math.round(left / dpr), y: Math.round(top / dpr), w: w / dpr, h: h / dpr }, portrait);
@@ -342,117 +387,102 @@
              bottom: parseFloat(cs.paddingBottom) || 0, left: parseFloat(cs.paddingLeft) || 0 };
   }
 
-  // Places the touch controls. On a phone held sideways they go in the
-  // margins left and right of the picture, sized to fit them; held upright,
-  // in the space below it. Only when even the smallest sizes (pad 88 px,
-  // buttons 48 px) do not fit do they go over the picture, fainter.
+  // Places the touch controls for what the game shows (touchUi.dataset.mode:
+  // level, menu or scene). They never cover the HUD band along the top of
+  // the picture (score, lives, health, weapon: the top fifth). Held
+  // sideways they sit over the picture's lower corners and in the margins
+  // beside it; held upright, in the space below the picture.
+  var HUD_SHARE = 100 / 480;     // the HUD's height, as a share of the picture
+  var SMALL = 48;                // pause, auto-fire and fullscreen buttons
   function place(el, x, y, w, h) {
     el.style.left = Math.round(x) + 'px';
     el.style.top = Math.round(y) + 'px';
     el.style.width = Math.round(w) + 'px';
-    if (h !== undefined) el.style.height = Math.round(h) + 'px';
+    el.style.height = Math.round(h === undefined ? w : h) + 'px';
   }
+  function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+  var stickR = 64, stickHome = [0, 0];  // stick radius and resting centre
   function layoutTouch(pic, portrait) {
-    var W = stage.clientWidth, H = stage.clientHeight, ins = insets(), g = 8, pillH = 44;
-    var pad = document.getElementById('dpad'), fire = document.getElementById('t-fire'),
-        jump = document.getElementById('t-jump'), special = document.getElementById('t-special'),
-        menu = document.getElementById('t-menu'), start = document.getElementById('t-start'),
-        fs = document.getElementById('t-fs'), both = document.getElementById('t-both');
+    var W = stage.clientWidth, H = stage.clientHeight, ins = insets(), g = 8;
+    var $ = function (id) { return document.getElementById(id); };
+    var L = ins.left + g, R = W - ins.right - g, T = ins.top + g, Bt = H - ins.bottom - g;
+    var hudBottom = pic.y + pic.h * HUD_SHARE;
     var hasFs = !fsBtn.hidden;
+    var fs = $('t-fs');
     fs.style.display = hasFs ? '' : 'none';
-    var L = ins.left + g, R = W - ins.right - g, T = ins.top + g, B = H - ins.bottom - g;
+    fs.textContent = isFullscreen() ? 'Exit' : 'Full';
 
-    // Buttons as a cluster in a box (x0..x1, y0..y1), bottom-aligned, Jump
-    // low on the left and Fire to its upper right, Special above Fire: side
-    // by side when the box is wide enough, else diagonally (one thumb can
-    // still rock between them, and the spot between them presses both).
-    // Only when neither fits buttons of 48 px, one column. Returns the
-    // button size used.
-    function buttons(x0, x1, y0, y1) {
-      var cw = x1 - x0, ch = y1 - y0, b;
-      var pairB = Math.min(76, (cw - g) / 2, (ch - g) / 2);
-      if (pairB >= 52) {
-        b = pairB;
-        place(fire, x1 - b, y1 - b - b * 0.35, b, b);
-        place(jump, x1 - 2 * b - g, y1 - b, b, b);
-        place(special, x1 - b * 0.85, y1 - 2 * b - g - b * 0.35, b * 0.85, b * 0.85);
-        return linkBoth(b);
-      }
-      // Diagonal: centres b + g apart, at most 60 degrees from level (so
-      // a thumb rocks across rather than up), with the biggest buttons
-      // that allows.
-      for (b = Math.min(76, cw); b >= 48; b--) {
-        var dx = cw - b, dy = Math.sqrt(Math.max(0, (b + g) * (b + g) - dx * dx));
-        if (dx >= (b + g) / 2 && b + dy + g + b * 0.85 <= ch) {
-          place(jump, x0, y1 - b, b, b);
-          place(fire, x1 - b, y1 - b - dy, b, b);
-          place(special, x1 - b * 0.85, y1 - b - dy - g - b * 0.85, b * 0.85, b * 0.85);
-          return linkBoth(b);
-        }
-      }
-      b = Math.min(72, cw, (ch - 2 * g) / 3);
-      var cx = x0 + (cw - b) / 2;
-      place(fire, cx, y1 - b, b, b);
-      place(jump, cx, y1 - 2 * b - g, b, b);
-      place(special, cx, y1 - 3 * b - 2 * g, b, b);
-      return linkBoth(b);
-    }
-    // The "both" spot sits on the midpoint between Fire and Jump.
-    function linkBoth(b) {
-      var f = [parseFloat(fire.style.left), parseFloat(fire.style.top)],
-          j = [parseFloat(jump.style.left), parseFloat(jump.style.top)];
-      var d = Math.max(28, Math.round(b * 0.45));
-      place(both, (f[0] + j[0] + b - d) / 2, (f[1] + j[1] + b - d) / 2, d, d);
-      return b;
-    }
-
-    var fits = false;
-    rotateHint.hidden = true;
+    // Small buttons: in the top corners of the margins beside the picture
+    // when they fit there, else just below the HUD band (or, upright, in a
+    // row under the picture).
+    var leftSpot, rightSpot, below;
     if (portrait) {
-      var y = pic.y + pic.h + g;
-      place(menu, L, y, 72, pillH);
-      place(start, L + 72 + g, y, 72, pillH);
-      if (hasFs) place(fs, R - 96, y, 96, pillH);
-      y += pillH + g;
-      if (overlay.hidden && touchMode) {
-        rotateHint.hidden = false;
+      below = pic.y + pic.h + g;
+      leftSpot = [L, below];
+      rightSpot = [R - SMALL, below];
+      below += SMALL + g;
+      rotateHint.hidden = !(overlay.hidden && touchMode);
+      if (!rotateHint.hidden) {
         rotateHint.style.left = L + 'px';
-        rotateHint.style.top = y + 'px';
-        y += 22;
+        rotateHint.style.top = below + 'px';
+        below += 22;
       }
-      var areaH = B - y;
-      var P = Math.min(180, (R - L) * 0.48, areaH);
-      place(pad, L, B - P, P, P);
-      var b = buttons(L + P + g, R, Math.max(y, B - areaH), B);
-      fits = P >= 88 && b >= 48;
     } else {
-      // Columns beside the picture.
-      var lx0 = L, lx1 = pic.x - g, rx0 = pic.x + pic.w + g, rx1 = R;
-      var cw = Math.min(lx1 - lx0, rx1 - rx0);
-      var pillW = Math.min(80, cw);
-      place(menu, lx0, T, pillW, pillH);
-      place(start, lx0, T + pillH + g, pillW, pillH);
-      if (hasFs) place(fs, rx1 - Math.min(96, cw), T, Math.min(96, cw), pillH);
-      var P = Math.min(150, cw, B - (T + 2 * pillH + 2 * g));
-      var b = buttons(rx0, rx1, T + (hasFs ? pillH + g : 0), B);
-      fits = P >= 88 && b >= 48 && pillW >= 56;
-      if (fits) {
-        place(pad, lx0 + (lx1 - lx0 - P) / 2, B - P, P, P);
-      } else {
-        // No room beside the picture: usual sizes, over its edges.
-        P = Math.min(140, H * 0.4);
-        place(pad, L, B - P, P, P);
-        place(menu, L, T, 72, pillH);
-        place(start, L + 72 + g, T, 72, pillH);
-        if (hasFs) place(fs, R - 96, T, 96, pillH);
-        var bb = Math.min(68, H * 0.18);
-        place(fire, R - bb, B - bb - bb * 0.35, bb, bb);
-        place(jump, R - 2 * bb - g, B - bb, bb, bb);
-        place(special, R - bb * 0.85, B - 2 * bb - g - bb * 0.35, bb * 0.85, bb * 0.85);
-        linkBoth(bb);
-      }
+      rotateHint.hidden = true;
+      leftSpot = [L, pic.x - L >= SMALL ? T : Math.max(T, hudBottom + g)];
+      rightSpot = [R - SMALL, R - (pic.x + pic.w) >= SMALL ? T : Math.max(T, hudBottom + g)];
+      below = Math.max(hudBottom + g, Math.max(leftSpot[1], rightSpot[1]) + SMALL + g);
     }
-    touchUi.classList.toggle('overlap', !fits);
+    if (hasFs) place(fs, leftSpot[0], leftSpot[1], SMALL);
+    var fsBottom = hasFs ? leftSpot[1] + SMALL + g : T;
+    // Button size: 64 to 84 px, by the screen's smaller side.
+    var side = Math.min(W, H);
+    var B = clamp(Math.round(side * (portrait ? 0.2 : 0.21)), 64, 84);
+
+    // ---- In a level ----
+    // Pause and auto-fire on the right, top.
+    place($('t-pause'), rightSpot[0], rightSpot[1], SMALL);
+    if (portrait) place($('t-auto'), rightSpot[0] - SMALL - g, rightSpot[1], SMALL);
+    else place($('t-auto'), rightSpot[0], rightSpot[1] + SMALL + g, SMALL);
+    // Fire, Jump and Special, bottom right: Jump low on the left, Fire to
+    // its upper right, Special above Fire.
+    var fire = $('t-fire'), jump = $('t-jump'), special = $('t-special'), both = $('t-both');
+    var Sp = Math.max(64, Math.round(B * 0.85));
+    place(fire, R - B, Bt - B - B * 0.35, B);
+    place(jump, R - 2 * B - g, Bt - B, B);
+    place(special, R - Sp, Bt - B - B * 0.35 - g - Sp, Sp);
+    // The "both" spot sits on the midpoint between Fire and Jump.
+    var d = Math.max(28, Math.round(B * 0.45));
+    place(both, (R - B + R - 2 * B - g + B - d) / 2, (Bt - B - B * 0.35 + Bt - B + B - d) / 2, d);
+    // The stick: anywhere in the left part, below the HUD (and below the
+    // small buttons there).
+    var zoneTop = portrait ? below : Math.max(hudBottom, fsBottom - g) + g;
+    var zoneRight = Math.min(W * (portrait ? 0.5 : 0.45), R - 2 * B - 2 * g);
+    zoneTop = Math.round(zoneTop);
+    place($('stick-zone'), 0, zoneTop, zoneRight, H - zoneTop);
+    stickR = clamp(Math.round(side * 0.19), 56, 80);
+    stickHome = [L + stickR + 12, Bt - stickR - 12];
+    var stick = $('stick'), knob = $('stick-knob');
+    place(stick, 0, 0, 2 * stickR);
+    var kr = Math.round(stickR * 0.9);
+    knob.style.width = knob.style.height = kr + 'px';
+    knob.style.margin = (-kr / 2) + 'px 0 0 ' + (-kr / 2) + 'px';
+    drawStick();
+
+    // ---- In menus ----
+    // Big arrows in a cross, bottom left; OK bottom right. Taps and swipes
+    // on the picture work too.
+    var A = clamp(Math.round(side * 0.2), 64, 84), gap = 6;
+    var cx = L + 1.5 * A + gap, cy = Bt - 1.5 * A - gap;
+    place($('t-up'), cx - A / 2, cy - 1.5 * A - gap, A);
+    place($('t-down'), cx - A / 2, cy + A / 2 + gap, A);
+    place($('t-left'), cx - 1.5 * A - gap, cy - A / 2, A);
+    place($('t-right'), cx + A / 2 + gap, cy - A / 2, A);
+    var O = clamp(Math.round(side * 0.24), 72, 96);
+    place($('t-ok'), R - O, Bt - O, O);
+
+    // ---- Cutscenes, dialogue, briefing ----
+    place($('t-skip'), R - 128, Bt - 64, 128, 64);
   }
 
   if (typeof ResizeObserver !== 'undefined') {
@@ -467,20 +497,33 @@
   }
   window.addEventListener('resize', layout);
   document.addEventListener('fullscreenchange', layout);
+  document.addEventListener('webkitfullscreenchange', layout);
 
   // ---- Fullscreen -------------------------------------------------------
   function isFullscreen() {
     return !!(document.fullscreenElement || document.webkitFullscreenElement);
   }
+  // Phones and tablets: lying sideways suits the game, so lock the screen
+  // that way while in fullscreen where the browser allows it (Android;
+  // browsers only allow it in fullscreen, and iOS not at all).
+  function lockLandscape() {
+    try {
+      var o = screen.orientation;
+      if (touchMode && o && o.lock) o.lock('landscape').catch(function () {});
+    } catch (err) {}
+  }
+  function enterFullscreen() {
+    var req = stage.requestFullscreen || stage.webkitRequestFullscreen;
+    if (!req) return;
+    var p = req.call(stage, { navigationUI: 'hide' });
+    if (p && p.then) p.then(lockLandscape, function () {});
+    else lockLandscape();  // older WebKit returns nothing
+  }
   function toggleFullscreen() {
     if (isFullscreen()) {
       (document.exitFullscreen || document.webkitExitFullscreen).call(document);
     } else {
-      var req = stage.requestFullscreen || stage.webkitRequestFullscreen;
-      if (req) {
-        var p = req.call(stage, { navigationUI: 'hide' });
-        if (p && p.catch) p.catch(function () {});
-      }
+      enterFullscreen();
     }
     canvas.focus();
   }
@@ -488,11 +531,30 @@
   if (!(stage.requestFullscreen || stage.webkitRequestFullscreen)) fsBtn.hidden = true;
   function updateFsButton() {
     fsBtn.textContent = isFullscreen() ? 'Exit fullscreen' : 'Fullscreen';
-    document.getElementById('t-fs').textContent = isFullscreen() ? 'Exit full' : 'Fullscreen';
+    document.getElementById('t-fs').textContent = isFullscreen() ? 'Exit' : 'Full';
   }
   document.getElementById('t-fs').addEventListener('click', toggleFullscreen);
   document.addEventListener('fullscreenchange', updateFsButton);
   document.addEventListener('webkitfullscreenchange', updateFsButton);
+
+  // On a touch device the first tap (the one that starts the game, or the
+  // first one at all) also enters fullscreen, once: a phone browser's bars
+  // take a good part of the screen. Not when the page already runs as a
+  // home-screen app, which is fullscreen.
+  var standalone = navigator.standalone === true;
+  try { standalone = standalone || matchMedia('(display-mode: fullscreen), (display-mode: standalone)').matches; } catch (err) {}
+  var autoFullscreenDone = false;
+  function autoFullscreen(e) {
+    if (autoFullscreenDone || !touchMode) return;
+    if (e.type === 'pointerup' && e.pointerType !== 'touch') return;
+    autoFullscreenDone = true;
+    if (!standalone && !isFullscreen() && !fsBtn.hidden) enterFullscreen();
+  }
+  window.addEventListener('touchend', autoFullscreen, true);
+  window.addEventListener('pointerup', autoFullscreen, true);
+  // An iPhone has no fullscreen for pages: point to the home-screen app.
+  if (fsBtn.hidden && !standalone && /iPhone|iPod/.test(navigator.userAgent))
+    document.getElementById('ios-hint').hidden = false;
 
   // Toolbar buttons never take focus, so Space and Return keep going to the
   // game instead of pressing the button again.
@@ -579,16 +641,8 @@
       showHelp(false);
     }
   }, true);
-  // Keys the game uses must not scroll the page or move focus, and while it
-  // runs '/' and "'" must not open the browser's quick find.
-  var GAME_KEYS = { ' ': 1, ArrowUp: 1, ArrowDown: 1, ArrowLeft: 1, ArrowRight: 1,
-                    PageUp: 1, PageDown: 1, Home: 1, End: 1, Tab: 1, Alt: 1, Backspace: 1 };
-  ['keydown', 'keyup'].forEach(function (type) {
-    window.addEventListener(type, function (e) {
-      if (e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
-      if (GAME_KEYS[e.key] || (running && (e.key === '/' || e.key === "'"))) e.preventDefault();
-    });
-  });
+  // (Keys the game uses are kept from the browser by web/pre.js, which runs
+  // as soon as the game's script loads.)
 
   // Hide the cursor and toolbar when the mouse is still.
   var idleTimer = 0;
@@ -612,9 +666,35 @@
                          { passive: true });
 
   // ---- Touch controls ---------------------------------------------------------
-  // The buttons send the same KeyboardEvents a keyboard would. SDL listens on
-  // window and reads `code` (for the scancode) and `keyCode` (for the
-  // keycode the game sees), so both are set.
+  // The controls send the same KeyboardEvents a keyboard would. SDL listens
+  // on window and reads `code` (for the scancode) and `keyCode` (for the
+  // keycode the game sees), so both are set: the DOM keyCode SDL maps to
+  // the wanted SDL keycode, and the DOM code it maps to its scancode.
+  var SK = 0x40000000;  // SDL keycodes of keys without a character: SK | scancode
+  var DOM_KEYS = {
+    8: ['Backspace', 'Backspace', 8], 9: ['Tab', 'Tab', 9], 13: ['Enter', 'Enter', 13],
+    27: ['Escape', 'Escape', 27], 32: [' ', 'Space', 32], 39: ["'", 'Quote', 222],
+    44: [',', 'Comma', 188], 45: ['-', 'Minus', 189], 46: ['.', 'Period', 190],
+    47: ['/', 'Slash', 191], 59: [';', 'Semicolon', 186], 61: ['=', 'Equal', 187],
+    91: ['[', 'BracketLeft', 219], 92: ['\\', 'Backslash', 220], 93: [']', 'BracketRight', 221],
+    96: ['`', 'Backquote', 192], 127: ['Delete', 'Delete', 46],
+  };
+  [[57, 'CapsLock', 'CapsLock', 20], [71, 'ScrollLock', 'ScrollLock', 145], [72, 'Pause', 'Pause', 19],
+   [73, 'Insert', 'Insert', 45], [74, 'Home', 'Home', 36], [75, 'PageUp', 'PageUp', 33],
+   [77, 'End', 'End', 35], [78, 'PageDown', 'PageDown', 34], [79, 'ArrowRight', 'ArrowRight', 39],
+   [80, 'ArrowLeft', 'ArrowLeft', 37], [81, 'ArrowDown', 'ArrowDown', 40], [82, 'ArrowUp', 'ArrowUp', 38],
+   [83, 'NumLock', 'NumLock', 144], [84, '/', 'NumpadDivide', 111, 3], [85, '*', 'NumpadMultiply', 106, 3],
+   [86, '-', 'NumpadSubtract', 109, 3], [87, '+', 'NumpadAdd', 107, 3], [88, 'Enter', 'NumpadEnter', 13, 3],
+   [98, '0', 'Numpad0', 96, 3], [99, '.', 'NumpadDecimal', 110, 3],
+   [101, 'ContextMenu', 'ContextMenu', 93],
+   [224, 'Control', 'ControlLeft', 17, 1], [225, 'Shift', 'ShiftLeft', 16, 1],
+   [226, 'Alt', 'AltLeft', 18, 1], [227, 'Meta', 'MetaLeft', 91, 1],
+   [228, 'Control', 'ControlRight', 17, 2], [229, 'Shift', 'ShiftRight', 16, 2],
+   [230, 'Alt', 'AltRight', 18, 2], [231, 'Meta', 'MetaRight', 91, 2]].forEach(function (k) {
+    DOM_KEYS[SK + k[0]] = k.slice(1);
+  });
+  for (var fk = 1; fk <= 12; fk++) DOM_KEYS[SK + 57 + fk] = ['F' + fk, 'F' + fk, 111 + fk];
+  for (var nk = 1; nk <= 9; nk++) DOM_KEYS[SK + 88 + nk] = ['' + nk, 'Numpad' + nk, 96 + nk, 3];
   function domKey(sdl) {
     if (sdl >= 97 && sdl <= 122) {
       var c = String.fromCharCode(sdl);
@@ -624,37 +704,41 @@
       var d = String.fromCharCode(sdl);
       return { key: d, code: 'Digit' + d, keyCode: sdl, location: 0 };
     }
-    var t = {
-      8: ['Backspace', 'Backspace', 8], 9: ['Tab', 'Tab', 9], 13: ['Enter', 'Enter', 13],
-      27: ['Escape', 'Escape', 27], 32: [' ', 'Space', 32],
-      0x4000004F: ['ArrowRight', 'ArrowRight', 39], 0x40000050: ['ArrowLeft', 'ArrowLeft', 37],
-      0x40000051: ['ArrowDown', 'ArrowDown', 40], 0x40000052: ['ArrowUp', 'ArrowUp', 38],
-      0x400000E0: ['Control', 'ControlLeft', 17, 1], 0x400000E1: ['Shift', 'ShiftLeft', 16, 1],
-      0x400000E2: ['Alt', 'AltLeft', 18, 1], 0x400000E4: ['Control', 'ControlRight', 17, 2],
-      0x400000E5: ['Shift', 'ShiftRight', 16, 2], 0x400000E6: ['Alt', 'AltRight', 18, 2],
-    }[sdl];
+    var t = DOM_KEYS[sdl];
     return t ? { key: t[0], code: t[1], keyCode: t[2], location: t[3] || 0 } : null;
   }
-  var ARROWS = { up: 0x40000052, down: 0x40000051, left: 0x40000050, right: 0x4000004F };
+  var ARROWS = { up: SK + 82, down: SK + 81, left: SK + 80, right: SK + 79 };
+  // The game's default keys (Left Ctrl, the Menu key, Space), for a button
+  // whose player 1 key cannot be sent (a pad button, or not set).
+  var DEFAULTS = { fire: SK + 224, jump: SK + 101, special: 32 };
   var P1 = { up: 0, down: 1, left: 2, right: 3, fire: 4, jump: 5, special: 6 };
 
-  // The key for one on-screen action. Directions and buttons send the
-  // player 1 key, which both the game and its menus read (every menu checks
-  // the arrows OR the player 1 key). A direction whose player 1 key is not
-  // set falls back to the arrow, so the menus still work. One key per
-  // action, so player 2 never moves too when bound to the arrows.
+  // What the game shows, from bb_ui_mode() (game/web_ui.h): 0 menus,
+  // 1 a level, 2 a cutscene or dialogue (Escape skips), 3 the briefing's
+  // "press a key".
+  var UI_MENU = 0, UI_LEVEL = 1, UI_SCENE = 2, UI_PRESS_KEY = 3;
+  var uiMode = UI_MENU;
+
+  // The keys for one on-screen action. The stick and the level buttons send
+  // the player 1 key, which both the game and its menus read (every menu
+  // checks the arrows OR the player 1 key). A direction whose player 1 key
+  // is not set falls back to the arrow, a button to the default key. One
+  // key per action, so player 2 never moves too when bound to the arrows.
+  // The menu arrows send the arrow keys.
   function actionKeys(act, codes) {
     var k = null;
-    if (act === 'menu') k = domKey(27);
-    else if (act === 'start') k = domKey(13);
+    if (act === 'ok') k = domKey(13);
+    else if (act === 'pause') k = domKey(27);
+    else if (act === 'skip') k = domKey(uiMode === UI_PRESS_KEY ? 13 : 27);
+    else if (act.indexOf('nav-') === 0) k = domKey(ARROWS[act.slice(4)]);
     else {
       if (codes && act in P1) k = domKey(codes[P1[act]]);
-      if (!k && ARROWS[act]) k = domKey(ARROWS[act]);
+      if (!k) k = domKey(ARROWS[act] || DEFAULTS[act]);
     }
     return k ? [k] : [];
   }
 
-  var held = {};  // DOM code -> number of fingers holding it
+  var held = {};  // DOM code -> number of holders (fingers, auto-fire, taps)
   function sendKey(type, k) {
     var ev = new KeyboardEvent(type, { key: k.key, code: k.code, location: k.location,
                                        bubbles: true, cancelable: true });
@@ -672,23 +756,27 @@
     if (!held[k.code]) return;
     if (--held[k.code] === 0) { delete held[k.code]; sendKey('keyup', k); }
   }
-
-  var pointers = {};  // pointerId -> { dpad: bool, acts: [], keys: [] }
-  var dpad = document.getElementById('dpad');
-
-  function dpadActs(x, y) {
-    var r = dpad.getBoundingClientRect();
-    var dx = x - (r.left + r.width / 2), dy = y - (r.top + r.height / 2);
-    var dist = Math.sqrt(dx * dx + dy * dy);
-    if (dist < r.width * 0.12) return [];
-    // 8 directions: each axis counts within 67.5 degrees of it.
-    var acts = [], cx = dx / dist, cy = dy / dist;
-    if (cx > 0.38) acts.push('right');
-    if (cx < -0.38) acts.push('left');
-    if (cy > 0.38) acts.push('down');
-    if (cy < -0.38) acts.push('up');
-    return acts;
+  // A short press (a tap or a swipe): long enough for the game to see it,
+  // as it reads the keys once a frame.
+  var taps = [];
+  function tapKeys(keys) {
+    var t = { keys: keys };
+    taps.push(t);
+    keys.forEach(press);
+    setTimeout(function () {
+      var i = taps.indexOf(t);
+      if (i < 0) return;  // already released by releaseAll()
+      taps.splice(i, 1);
+      keys.forEach(release);
+    }, 120);
   }
+  function haptic() {
+    try { if (navigator.vibrate) navigator.vibrate(12); } catch (err) {}
+  }
+
+  // pointerId -> { kind: 'button' | 'stick' | 'gesture' | 'none', acts, keys, ... }
+  var pointers = {};
+
   function buttonActs(x, y) {
     var el = document.elementFromPoint(x, y);
     el = el && el.closest && el.closest('#touch [data-act]');
@@ -698,6 +786,7 @@
     var codes = keyCodes();
     var keys = [];
     acts.forEach(function (a) { keys = keys.concat(actionKeys(a, codes)); });
+    if (p.kind === 'button' && acts.some(function (a) { return p.acts.indexOf(a) < 0; })) haptic();
     keys.forEach(press);
     p.keys.forEach(release);
     p.keys = keys;
@@ -707,37 +796,118 @@
   function refreshLit() {
     var on = {};
     Object.keys(pointers).forEach(function (id) { pointers[id].acts.forEach(function (a) { on[a] = 1; }); });
-    ['up', 'down', 'left', 'right'].forEach(function (a) {
-      dpad.querySelector('.' + a[0]).classList.toggle('on', !!on[a]);
-    });
     Array.prototype.forEach.call(touchUi.querySelectorAll('[data-act]'), function (el) {
       el.classList.toggle('on', el.dataset.act.split(' ').every(function (a) { return on[a]; }));
     });
+    drawStick();
   }
+
+  // The floating stick: it appears where the thumb lands in the stick zone
+  // and follows the thumb when dragged further than its radius. Past a dead
+  // zone it gives one of 8 directions; the direction only changes once the
+  // thumb is clearly into the next one (hysteresis), so it does not flicker
+  // on a boundary.
+  var SECTOR_ACTS = [['right'], ['right', 'down'], ['down'], ['down', 'left'],
+                     ['left'], ['left', 'up'], ['up'], ['up', 'right']];
+  var DEAD = 0.28, HYST = 0.2;  // dead zone (share of the radius); hysteresis (share of a sector)
+  var activeStick = null;
+  function stickMove(p, x, y) {
+    var dx = x - p.cx, dy = y - p.cy, dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist > stickR) {
+      p.cx += dx * (dist - stickR) / dist;
+      p.cy += dy * (dist - stickR) / dist;
+      dx = x - p.cx; dy = y - p.cy; dist = stickR;
+    }
+    p.kx = dx; p.ky = dy;
+    var sector = p.sector;
+    if (dist < stickR * DEAD * (sector < 0 ? 1 : 0.75)) {
+      sector = -1;
+    } else {
+      var a = Math.atan2(dy, dx) / (Math.PI / 4);  // in sectors, -4..4
+      var off = sector < 0 ? 9 : Math.abs((((a - sector) % 8) + 12) % 8 - 4);
+      if (off > 0.5 + HYST) sector = ((Math.round(a) % 8) + 8) % 8;
+    }
+    p.sector = sector;
+    setActs(p, SECTOR_ACTS[sector] || []);
+  }
+  function drawStick() {
+    var stick = document.getElementById('stick'), knob = document.getElementById('stick-knob');
+    var p = activeStick;
+    var cx = p ? p.cx : stickHome[0], cy = p ? p.cy : stickHome[1];
+    stick.style.left = Math.round(cx - stickR) + 'px';
+    stick.style.top = Math.round(cy - stickR) + 'px';
+    stick.classList.toggle('idle', !p);
+    stick.classList.toggle('on', !!(p && p.sector >= 0));
+    knob.style.transform = p ? 'translate(' + Math.round(p.kx) + 'px,' + Math.round(p.ky) + 'px)' : '';
+  }
+
+  // Taps and swipes on the picture: in menus a swipe is an arrow key and a
+  // tap is Return; in cutscenes, the briefing and dialogue a tap is Return
+  // (it moves dialogue on and starts the mission).
+  var SWIPE = 28, TAP = 14;
+  function gestureMove(p, x, y) {
+    if (p.done || uiMode !== UI_MENU) return;
+    var dx = x - p.x0, dy = y - p.y0;
+    if (Math.max(Math.abs(dx), Math.abs(dy)) < SWIPE) return;
+    p.done = true;
+    var dir = Math.abs(dy) >= Math.abs(dx) ? (dy < 0 ? 'up' : 'down') : (dx < 0 ? 'left' : 'right');
+    tapKeys([domKey(ARROWS[dir])]);
+  }
+  function gestureEnd(p, x, y) {
+    if (p.done) return;
+    var dx = x - p.x0, dy = y - p.y0;
+    if (dx * dx + dy * dy <= TAP * TAP && Date.now() - p.t0 < 600) { haptic(); tapKeys([domKey(13)]); }
+  }
+
   function track(e) {
     var p = pointers[e.pointerId];
     if (!p) return;
     e.preventDefault();
-    setActs(p, p.dpad ? dpadActs(e.clientX, e.clientY) : buttonActs(e.clientX, e.clientY));
+    if (p.kind === 'button') setActs(p, buttonActs(e.clientX, e.clientY));
+    else if (p.kind === 'stick') stickMove(p, e.clientX, e.clientY);
+    else if (p.kind === 'gesture') gestureMove(p, e.clientX, e.clientY);
   }
   function end(e) {
     var p = pointers[e.pointerId];
     if (!p) return;
     delete pointers[e.pointerId];
+    if (p.kind === 'gesture' && e.type === 'pointerup') gestureEnd(p, e.clientX, e.clientY);
+    if (p === activeStick) activeStick = null;
     setActs(p, []);
   }
   function releaseAll() {
     Object.keys(pointers).forEach(function (id) { var p = pointers[id]; delete pointers[id]; setActs(p, []); });
+    activeStick = null;
+    taps = [];
+    autoKeys = null;
     // Nothing should still be held, but make sure the game sees every key up.
     Object.keys(held).forEach(function (code) { delete held[code]; sendKey('keyup', heldKey[code]); });
     refreshLit();
   }
 
   touchUi.addEventListener('pointerdown', function (e) {
+    var t = e.target;
+    if (t.closest && t.closest('#t-fs')) return;  // a real button: its click toggles fullscreen
     e.preventDefault();
-    var onDpad = !!(e.target.closest && e.target.closest('[data-dpad]'));
-    try { e.target.setPointerCapture(e.pointerId); } catch (err) {}
-    pointers[e.pointerId] = { dpad: onDpad, acts: [], keys: [] };
+    focused = true;
+    try { t.setPointerCapture(e.pointerId); } catch (err) {}
+    var p = { kind: 'button', acts: [], keys: [] };
+    if (t.id === 't-auto') {
+      p.kind = 'none';
+      setAutoFire(!autoFire);
+      haptic();
+    } else if (t.id === 'stick-zone') {
+      if (activeStick) p.kind = 'none';  // one stick at a time
+      else {
+        p.kind = 'stick';
+        p.cx = e.clientX; p.cy = e.clientY; p.kx = p.ky = 0; p.sector = -1;
+        activeStick = p;
+      }
+    } else if (t.id === 'gesture') {
+      p.kind = 'gesture';
+      p.x0 = e.clientX; p.y0 = e.clientY; p.t0 = Date.now(); p.done = false;
+    }
+    pointers[e.pointerId] = p;
     track(e);
   });
   touchUi.addEventListener('pointermove', track);
@@ -745,10 +915,57 @@
     touchUi.addEventListener(type, end);
   });
   touchUi.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+  // Every key the controls hold is let go when the touch is cancelled, the
+  // window loses focus or the page is hidden.
+  var focused = true;
   window.addEventListener('touchcancel', releaseAll);
-  window.addEventListener('blur', releaseAll);
+  window.addEventListener('blur', function () { focused = false; releaseAll(); });
+  window.addEventListener('focus', function () { focused = true; });
   window.addEventListener('pagehide', releaseAll);
-  document.addEventListener('visibilitychange', function () { if (document.hidden) releaseAll(); });
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) releaseAll(); else focused = true;
+  });
+
+  // Auto-fire: while on, Fire is held down for the whole level. The game
+  // fires a new burst every time the last one ends as long as Fire is down
+  // (Couille::update), so holding it shoots continuously. It is let go
+  // whenever the level is left (pause menu, dialogue, end of level), so the
+  // game's "wait until every key is up" never waits on it. The setting is
+  // remembered on this device.
+  var autoFire = false, autoKeys = null;
+  try { autoFire = localStorage.getItem('bb-autofire') === '1'; } catch (err) {}
+  function setAutoFire(on) {
+    autoFire = on;
+    try { localStorage.setItem('bb-autofire', on ? '1' : '0'); } catch (err) {}
+    updateAutoFire();
+  }
+  function updateAutoFire() {
+    var want = autoFire && uiMode === UI_LEVEL && !touchUi.hidden && focused && !document.hidden;
+    if (want && !autoKeys) {
+      autoKeys = actionKeys('fire', keyCodes());
+      autoKeys.forEach(press);
+    } else if (!want && autoKeys) {
+      autoKeys.forEach(release);
+      autoKeys = null;
+    }
+    var btn = document.getElementById('t-auto');
+    btn.classList.toggle('on', autoFire);
+    btn.setAttribute('aria-checked', autoFire ? 'true' : 'false');
+  }
+
+  // Follows what the game shows and swaps the controls to match. Anything
+  // held is let go first, so no key stays down across the change.
+  function pollUiMode() {
+    var m = UI_MENU;
+    try { if (running && !failed && Module._bb_ui_mode) m = Module._bb_ui_mode(); } catch (err) {}
+    if (m !== uiMode) {
+      uiMode = m;
+      releaseAll();
+      touchUi.dataset.mode = m === UI_LEVEL ? 'level' : m === UI_MENU ? 'menu' : 'scene';
+    }
+    updateAutoFire();
+  }
+  setInterval(pollUiMode, 50);
 
   function updateTouchUi() {
     document.body.classList.toggle('touch', touchMode);

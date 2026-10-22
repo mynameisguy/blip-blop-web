@@ -12,11 +12,12 @@
 // picture must then fill the screen width at the top (4:3, the owner's
 // choice), even at a non-integer scale: it is checked like the scaled-down
 // case (whole frame, at the top, full width, close to the frame, margins
-// black). Lying down, phones keep the exact whole-number scale above.
+// black). Lying down, the picture fills the screen height instead (4:3,
+// centred, also drawn sharp-bilinear), checked the same way.
 // The toolbar is hidden for the screenshot (it fades out on its own once the
 // mouse is still, but timers are held while the frame is frozen). Touch
 // controls and the rotate hint are hidden for the shot too:
-// tools/check_touch_layout.mjs checks they stay off the picture.
+// tools/check_touch_layout.mjs checks where they go.
 //
 //   node tools/check_scaling.mjs <url> [options]
 //     --frame N          frame to compare (default 400: an intro frame whose
@@ -28,7 +29,8 @@
 //     --fullscreen       also check in fullscreen (Fullscreen button), on a
 //                        1920x1080 screen so the scale changes when it can
 //     --touch            phone/tablet: touch and mobile (default sizes
-//                        390x844@3,360x740@4,412x915@2.625,844x390@3)
+//                        390x844@3,360x740@4,412x915@2.625,844x390@3,
+//                        640x360@3,740x360@4,915x412@2.625,1024x768@2)
 //     --css RULES        extra CSS for the page (to see that the check fails)
 //     --out DIR          save screenshots and failing crops here
 //
@@ -49,7 +51,7 @@ function opt(name, def) {
 }
 const frame = +opt('frame', 400);
 const touch = args.includes('--touch');
-const sizeSpecs = opt('sizes', touch ? '390x844@3,360x740@4,412x915@2.625,844x390@3' : '800x600,1366x768,1920x1080')
+const sizeSpecs = opt('sizes', touch ? '390x844@3,360x740@4,412x915@2.625,844x390@3,640x360@3,740x360@4,915x412@2.625,1024x768@2' : '800x600,1366x768,1920x1080')
   .split(',').map(s => { const [wh, r] = s.split('@'); return [...wh.split('x').map(Number), r ? +r : null]; });
 const dprs = opt('dpr', '1').split(',').map(Number);
 // [width, height, ratio] for every run.
@@ -251,10 +253,12 @@ let reference = null;
 
       // Upright phone: fill the width, at the top, in the upper 62%.
       const upright = touch && shot.h > shot.w;
-      const room = Math.floor(shot.h * 0.62);
-      let n = upright ? 0 : Math.floor(Math.min(shot.w / 640, shot.h / 480));
+      // Lying down (touch): fill the height (4:3), centred.
+      const sideways = touch && !upright;
+      const room = upright ? Math.floor(shot.h * 0.62) : shot.h;
+      let n = upright || sideways ? 0 : Math.floor(Math.min(shot.w / 640, shot.h / 480));
       let pw, ph;
-      if (upright) {
+      if (upright || sideways) {
         pw = Math.min(shot.w, Math.floor(room * 4 / 3)); ph = Math.round(pw * 3 / 4);
         if (pw % 640 === 0) n = pw / 640;  // happens to be a whole scale
       } else if (n >= 1) { pw = 640 * n; ph = 480 * n; }
@@ -272,7 +276,7 @@ let reference = null;
       const fbBox = bbox(fb, 640, 480), scBox = bbox(shot.rgb, shot.w, shot.h);
       let px = null, py = null;
       if (!scBox) problems.push('nothing but black on screen: the game picture is not visible');
-      else if (n < 1 || upright) {
+      else if (n < 1 || upright || sideways) {
         // Smooth scaling blurs the edges, so try each allowed position and
         // keep the closest; the margin and difference checks below decide.
         let best = Infinity;
@@ -320,12 +324,13 @@ let reference = null;
       if (errors.length) problems.push('page errors: ' + errors.join('; '));
 
       const how = upright ? `upright phone, width filled: ${pw}x${ph} (scale ${(pw / 640).toFixed(3)}) at the top`
+        : sideways ? `touch device lying down, height filled: ${pw}x${ph} (scale ${(pw / 640).toFixed(3)}), centred`
         : n >= 1 ? `scale ${n}` : `scaled down to ${pw}x${ph} (below 1x)`;
       const where = `${how}, picture at (${cx},${cy}) in ${shot.w}x${shot.h} screenshot`;
       if (problems.length) {
         failures++;
         console.log(`${label}: FAIL ${where}\n  - ${problems.join('\n  - ')}`);
-      } else if (n >= 1 && !upright) {
+      } else if (n >= 1 && !upright && !sideways) {
         console.log(`${label}: OK ${where}; all ${shot.w * shot.h} screen pixels as expected`);
       } else {
         console.log(`${label}: OK ${where}; margins black, mean difference ${r.mad.toFixed(1)}`);

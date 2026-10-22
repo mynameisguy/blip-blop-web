@@ -79,6 +79,7 @@
 #include "precache.h"
 #include "trace.h"
 #include "harness.h"
+#include "web_ui.h"
 
 Personnage dummyPlayer;
 
@@ -459,6 +460,7 @@ bool Game::joueNiveau(const char* nom_niveau, int type) {
         DDFlip();
 
         mbk_inter.play(2);
+        BB_WEB_UI_MODE(BB_UI_PRESS_KEY);
         in.waitClean();
         in.waitKey();
         briefing = false;
@@ -475,9 +477,12 @@ bool Game::joueNiveau(const char* nom_niveau, int type) {
 
     // Boucle principale
     //
-    while (!joueurs_morts && !niveau_fini && !skipped && !app_killed) {
-        gameLoop();
-        updateVictoryAndDefeat();
+    {
+        BB_WEB_UI_MODE(BB_UI_LEVEL);
+        while (!joueurs_morts && !niveau_fini && !skipped && !app_killed) {
+            gameLoop();
+            updateVictoryAndDefeat();
+        }
     }
 
     if (joueurs_morts) debug << "Players died\n";
@@ -1638,6 +1643,7 @@ void Game::updateTeteTurc() {
 
 void Game::updateRPG() {
     if (rpg_to_play == -1) return;
+    BB_WEB_UI_MODE(BB_UI_SCENE);
 
     bool continued = true;
 
@@ -1724,6 +1730,7 @@ void Game::updateMenu() {
     // Appelle le menu s'il y a lieu de le faire
     //
     if (in.scanKey(DIK_ESCAPE)) {
+        BB_WEB_UI_MODE(BB_UI_MENU);
         MenuGame menu;
         int r;
 

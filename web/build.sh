@@ -58,3 +58,5 @@ JS="blipblop.$(hash blipblop.js).js"
 mv blipblop.js "$JS"
 sed "s|'blipblop\.js'|'$JS'|" "$ROOT/web/index.html" > index.html
 grep -q "'$JS'" index.html
+# Web app manifest and icons (home-screen app: fullscreen, sideways).
+cp "$ROOT/web/manifest.webmanifest" "$ROOT/web/icon-192.png" "$ROOT/web/icon-512.png" .

@@ -10,6 +10,7 @@
 #include "globals.h"
 #include "config.h"
 #include "precache.h"
+#include "web_ui.h"
 
 #define ISCOM( _cmd) (strcmp( cmd_name, _cmd)==0)
 
@@ -46,6 +47,7 @@ void CINEPlayer::initPlayer()
 
 bool CINEPlayer::playScene(const char * file, SDL::Surface * s1, SDL::Surface * s2)
 {
+	BB_WEB_UI_MODE(BB_UI_SCENE);
 	bool	skiped = false;
 	/*
 		debug<<"---------------------------------------------------------------\n";
