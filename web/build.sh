@@ -58,3 +58,28 @@ JS="blipblop.$(hash blipblop.js).js"
 mv blipblop.js "$JS"
 sed "s|'blipblop\.js'|'$JS'|" "$ROOT/web/index.html" > index.html
 grep -q "'$JS'" index.html
+
+# Search and sharing files, served next to index.html.
+cp "$ROOT/web/sitemap.xml" "$ROOT/web/og-image.png" "$OUT/"
+
+# Google tags, only when the IDs are set (GitHub repository variables
+# GA_MEASUREMENT_ID and GOOGLE_SITE_VERIFICATION, passed in by pages.yml).
+# Each ID is checked against its expected format before it goes into the page.
+TAGS=""
+if [ -n "${GOOGLE_SITE_VERIFICATION:-}" ]; then
+  [[ "$GOOGLE_SITE_VERIFICATION" =~ ^[A-Za-z0-9_-]+$ ]] || { echo "bad GOOGLE_SITE_VERIFICATION" >&2; exit 1; }
+  TAGS+="<meta name=\"google-site-verification\" content=\"$GOOGLE_SITE_VERIFICATION\">\n"
+fi
+if [ -n "${GA_MEASUREMENT_ID:-}" ]; then
+  [[ "$GA_MEASUREMENT_ID" =~ ^G-[A-Z0-9]+$ ]] || { echo "bad GA_MEASUREMENT_ID" >&2; exit 1; }
+  TAGS+="<script async src=\"https://www.googletagmanager.com/gtag/js?id=$GA_MEASUREMENT_ID\"></script>\n"
+  TAGS+="<script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}gtag('js',new Date());gtag('config','$GA_MEASUREMENT_ID');</script>\n"
+fi
+python3 - index.html "$TAGS" <<'PY'
+import sys
+p, tags = sys.argv[1], sys.argv[2].replace('\\n', '\n')
+s = open(p).read()
+mark = '<!-- google-tags: build.sh puts Google Analytics and Search Console tags here -->\n'
+assert s.count(mark) == 1
+open(p, 'w').write(s.replace(mark, tags))
+PY
