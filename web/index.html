@@ -116,7 +116,7 @@
     -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
   }
   #touch > * { pointer-events: auto; touch-action: none; position: absolute; box-sizing: border-box; }
-  #touch .lvl, #touch .menu, #touch .scene { display: none; }
+  #touch .lvl, #touch .menu, #touch .scene, #touch .text { display: none; }
   #touch[data-mode="level"] .lvl, #touch[data-mode="menu"] .menu,
   #touch[data-mode="scene"] .scene { display: flex; }
   /* Taps and swipes on the picture (menus and cutscenes), under the buttons. */
@@ -164,6 +164,20 @@
   }
   #t-both.on { background: rgba(255, 204, 51, .3); }
   body.touch #toolbar { display: none; }
+  /* On touch devices the page never scrolls, zooms or bounces: every touch
+     belongs to the game (SDL cancels touch events, which a browser only
+     allows while it is not panning). Panels still scroll. */
+  body.touch #stage, body.touch #canvas, body.touch #view { touch-action: none; }
+  body.touch .card { touch-action: pan-y; }
+  html.touch, body.touch { overscroll-behavior: none; }
+  #touch[data-mode="text"] .text { display: flex; }
+  /* Takes the soft keyboard's typing while a hi-score name is entered; it
+     stays out of sight. */
+  #t-text {
+    position: absolute; left: 0; top: 0; width: 1px; height: 1px; opacity: 0;
+    border: 0; padding: 0; font-size: 16px; z-index: 1;
+  }
+  #t-fs { font-size: 10px; line-height: 1.15; text-align: center; }
   #rotate {
     position: absolute; z-index: 2; white-space: nowrap;
     color: var(--dim); font-size: 12px; opacity: .8;
@@ -176,7 +190,7 @@
   <canvas id="view" width="640" height="480" hidden></canvas>
 
   <div id="touch" hidden data-mode="menu">
-    <div id="gesture" class="menu scene"></div>
+    <div id="gesture" class="menu scene text"></div>
     <div id="stick-zone" class="lvl"></div>
     <div id="stick" class="lvl idle"><div id="stick-knob"></div></div>
     <div class="tbtn lvl" id="t-special" data-act="special">Special</div>
@@ -189,10 +203,13 @@
     <div class="tbtn arrow down menu" id="t-down" data-act="nav-down" aria-label="Down"><i></i></div>
     <div class="tbtn arrow left menu" id="t-left" data-act="nav-left" aria-label="Left"><i></i></div>
     <div class="tbtn arrow right menu" id="t-right" data-act="nav-right" aria-label="Right"><i></i></div>
-    <div class="tbtn menu" id="t-ok" data-act="ok">OK</div>
+    <div class="tbtn menu text" id="t-ok" data-act="ok">OK</div>
+    <div class="tbtn pill text" id="t-kbd" aria-label="Type your name">Keyboard</div>
     <div class="tbtn pill scene" id="t-skip" data-act="skip">Skip</div>
-    <button class="tbtn small" id="t-fs" type="button" tabindex="-1">Full</button>
+    <button class="tbtn small" id="t-fs" type="button" tabindex="-1">Full screen</button>
   </div>
+  <input id="t-text" type="text" autocomplete="off" autocorrect="off" autocapitalize="characters"
+         spellcheck="false" enterkeyhint="done" tabindex="-1" aria-label="Your name">
   <div id="rotate" hidden>Turn the phone sideways for a bigger picture</div>
 
   <div id="toolbar">
@@ -393,7 +410,8 @@
   // sideways they sit over the picture's lower corners and in the margins
   // beside it; held upright, in the space below the picture.
   var HUD_SHARE = 100 / 480;     // the HUD's height, as a share of the picture
-  var SMALL = 48;                // pause, auto-fire and fullscreen buttons
+  var SMALL = 48;                // pause and auto-fire buttons
+  var FSW = 64;                  // the fullscreen button's width
   function place(el, x, y, w, h) {
     el.style.left = Math.round(x) + 'px';
     el.style.top = Math.round(y) + 'px';
@@ -410,7 +428,7 @@
     var hasFs = !fsBtn.hidden;
     var fs = $('t-fs');
     fs.style.display = hasFs ? '' : 'none';
-    fs.textContent = isFullscreen() ? 'Exit' : 'Full';
+    fs.textContent = isFullscreen() ? 'Exit full screen' : 'Full screen';
 
     // Small buttons: in the top corners of the margins beside the picture
     // when they fit there, else just below the HUD band (or, upright, in a
@@ -429,11 +447,11 @@
       }
     } else {
       rotateHint.hidden = true;
-      leftSpot = [L, pic.x - L >= SMALL ? T : Math.max(T, hudBottom + g)];
+      leftSpot = [L, pic.x - L >= FSW ? T : Math.max(T, hudBottom + g)];
       rightSpot = [R - SMALL, R - (pic.x + pic.w) >= SMALL ? T : Math.max(T, hudBottom + g)];
       below = Math.max(hudBottom + g, Math.max(leftSpot[1], rightSpot[1]) + SMALL + g);
     }
-    if (hasFs) place(fs, leftSpot[0], leftSpot[1], SMALL);
+    if (hasFs) place(fs, leftSpot[0], leftSpot[1], FSW, SMALL);
     var fsBottom = hasFs ? leftSpot[1] + SMALL + g : T;
     // Button size: 64 to 84 px, by the screen's smaller side.
     var side = Math.min(W, H);
@@ -462,6 +480,14 @@
     place($('stick-zone'), 0, zoneTop, zoneRight, H - zoneTop);
     stickR = clamp(Math.round(side * 0.19), 56, 80);
     stickHome = [L + stickR + 12, Bt - stickR - 12];
+    // A thumb on the stick while the layout changes (the phone turned):
+    // let it go, so the ring does not stay where the old layout had it.
+    if (activeStick) {
+      Object.keys(pointers).forEach(function (id) {
+        if (pointers[id] === activeStick) { var p = pointers[id]; delete pointers[id]; setActs(p, []); }
+      });
+      activeStick = null;
+    }
     var stick = $('stick'), knob = $('stick-knob');
     place(stick, 0, 0, 2 * stickR);
     var kr = Math.round(stickR * 0.9);
@@ -480,6 +506,8 @@
     place($('t-right'), cx + A / 2 + gap, cy - A / 2, A);
     var O = clamp(Math.round(side * 0.24), 72, 96);
     place($('t-ok'), R - O, Bt - O, O);
+    // Typing a name: OK, and a button that brings up the keyboard.
+    place($('t-kbd'), L, Bt - 64, 140, 64);
 
     // ---- Cutscenes, dialogue, briefing ----
     place($('t-skip'), R - 128, Bt - 64, 128, 64);
@@ -531,7 +559,7 @@
   if (!(stage.requestFullscreen || stage.webkitRequestFullscreen)) fsBtn.hidden = true;
   function updateFsButton() {
     fsBtn.textContent = isFullscreen() ? 'Exit fullscreen' : 'Fullscreen';
-    document.getElementById('t-fs').textContent = isFullscreen() ? 'Exit' : 'Full';
+    document.getElementById('t-fs').textContent = isFullscreen() ? 'Exit full screen' : 'Full screen';
   }
   document.getElementById('t-fs').addEventListener('click', toggleFullscreen);
   document.addEventListener('fullscreenchange', updateFsButton);
@@ -662,8 +690,10 @@
     if (!(e.target.closest && e.target.closest('button, .card'))) e.preventDefault();
     canvas.focus({ preventScroll: true });
   });
-  stage.addEventListener('touchstart', function () { canvas.focus({ preventScroll: true }); },
-                         { passive: true });
+  stage.addEventListener('touchstart', function () {
+    // (Not while a name is typed: that would close the soft keyboard.)
+    if (uiMode !== UI_TEXT) canvas.focus({ preventScroll: true });
+  }, { passive: true });
 
   // ---- Touch controls ---------------------------------------------------------
   // The controls send the same KeyboardEvents a keyboard would. SDL listens
@@ -694,6 +724,7 @@
     DOM_KEYS[SK + k[0]] = k.slice(1);
   });
   for (var fk = 1; fk <= 12; fk++) DOM_KEYS[SK + 57 + fk] = ['F' + fk, 'F' + fk, 111 + fk];
+  for (fk = 13; fk <= 15; fk++) DOM_KEYS[SK + 91 + fk] = ['F' + fk, 'F' + fk, 111 + fk];
   for (var nk = 1; nk <= 9; nk++) DOM_KEYS[SK + 88 + nk] = ['' + nk, 'Numpad' + nk, 96 + nk, 3];
   function domKey(sdl) {
     if (sdl >= 97 && sdl <= 122) {
@@ -707,16 +738,26 @@
     var t = DOM_KEYS[sdl];
     return t ? { key: t[0], code: t[1], keyCode: t[2], location: t[3] || 0 } : null;
   }
+  // A key the game can be bound to. Keys no browser key event can produce
+  // (SDLK_MENU, the default Jump key, or SDLK_KP_DECIMAL) are handed to the
+  // game as SDL key events instead (bb_web_key() in game/web_api.cpp). Pad
+  // bindings and unset ones give null.
+  function gameKey(sdl) {
+    var k = domKey(sdl);
+    if (k || !sdl) return k;
+    var keyboard = sdl < 255 || (sdl & SK) !== 0;
+    return keyboard ? { code: 'sdl:' + sdl, sdl: sdl } : null;
+  }
   var ARROWS = { up: SK + 82, down: SK + 81, left: SK + 80, right: SK + 79 };
-  // The game's default keys (Left Ctrl, the Menu key, Space), for a button
-  // whose player 1 key cannot be sent (a pad button, or not set).
-  var DEFAULTS = { fire: SK + 224, jump: SK + 101, special: 32 };
+  // The game's default keys (Left Ctrl, SDLK_MENU, Space), for a button
+  // whose player 1 binding is not a key (a pad button) or not set.
+  var DEFAULTS = { fire: SK + 224, jump: SK + 118, special: 32 };
   var P1 = { up: 0, down: 1, left: 2, right: 3, fire: 4, jump: 5, special: 6 };
 
   // What the game shows, from bb_ui_mode() (game/web_ui.h): 0 menus,
   // 1 a level, 2 a cutscene or dialogue (Escape skips), 3 the briefing's
-  // "press a key".
-  var UI_MENU = 0, UI_LEVEL = 1, UI_SCENE = 2, UI_PRESS_KEY = 3;
+  // "press a key", 4 typing a name for the hi-score table.
+  var UI_MENU = 0, UI_LEVEL = 1, UI_SCENE = 2, UI_PRESS_KEY = 3, UI_TEXT = 4;
   var uiMode = UI_MENU;
 
   // The keys for one on-screen action. The stick and the level buttons send
@@ -732,14 +773,18 @@
     else if (act === 'skip') k = domKey(uiMode === UI_PRESS_KEY ? 13 : 27);
     else if (act.indexOf('nav-') === 0) k = domKey(ARROWS[act.slice(4)]);
     else {
-      if (codes && act in P1) k = domKey(codes[P1[act]]);
-      if (!k) k = domKey(ARROWS[act] || DEFAULTS[act]);
+      if (codes && act in P1) k = gameKey(codes[P1[act]]);
+      if (!k) k = gameKey(ARROWS[act] || DEFAULTS[act]);
     }
     return k ? [k] : [];
   }
 
   var held = {};  // DOM code -> number of holders (fingers, auto-fire, taps)
   function sendKey(type, k) {
+    if (k.sdl) {
+      try { Module._bb_web_key(k.sdl, type === 'keydown' ? 1 : 0); } catch (err) {}
+      return;
+    }
     var ev = new KeyboardEvent(type, { key: k.key, code: k.code, location: k.location,
                                        bubbles: true, cancelable: true });
     Object.defineProperty(ev, 'keyCode', { get: function () { return k.keyCode; } });
@@ -856,7 +901,10 @@
   function gestureEnd(p, x, y) {
     if (p.done) return;
     var dx = x - p.x0, dy = y - p.y0;
-    if (dx * dx + dy * dy <= TAP * TAP && Date.now() - p.t0 < 600) { haptic(); tapKeys([domKey(13)]); }
+    if (dx * dx + dy * dy <= TAP * TAP && Date.now() - p.t0 < 600) {
+      haptic();
+      if (uiMode === UI_TEXT) openKeyboard(); else tapKeys([domKey(13)]);
+    }
   }
 
   function track(e) {
@@ -892,7 +940,11 @@
     focused = true;
     try { t.setPointerCapture(e.pointerId); } catch (err) {}
     var p = { kind: 'button', acts: [], keys: [] };
-    if (t.id === 't-auto') {
+    if (t.id === 't-kbd') {
+      p.kind = 'none';
+      openKeyboard();
+      haptic();
+    } else if (t.id === 't-auto') {
       p.kind = 'none';
       setAutoFire(!autoFire);
       haptic();
@@ -961,14 +1013,63 @@
     if (m !== uiMode) {
       uiMode = m;
       releaseAll();
-      touchUi.dataset.mode = m === UI_LEVEL ? 'level' : m === UI_MENU ? 'menu' : 'scene';
+      touchUi.dataset.mode = m === UI_LEVEL ? 'level' : m === UI_MENU ? 'menu' : m === UI_TEXT ? 'text' : 'scene';
+      if (m === UI_TEXT) openKeyboard();
+      else if (document.activeElement === textInput) { textInput.blur(); canvas.focus({ preventScroll: true }); }
     }
     updateAutoFire();
   }
   setInterval(pollUiMode, 50);
 
+  // Typing a hi-score name on a phone: a hidden text field brings up the
+  // soft keyboard, and what is typed into it goes to the game as key
+  // presses, one at a time (the game waits for each key to be let go).
+  // Letters, digits and spaces make the name; deleting is Backspace. Keys
+  // from a real keyboard reach the game directly, so they are skipped here.
+  var textInput = document.getElementById('t-text');
+  var TEXT_FILL = '  ', typed = [], typing = 0, physicalKey = false;
+  function openKeyboard() {
+    if (touchUi.hidden) return;
+    textInput.value = TEXT_FILL;
+    try {
+      textInput.focus({ preventScroll: true });
+      textInput.setSelectionRange(TEXT_FILL.length, TEXT_FILL.length);
+    } catch (err) {}
+  }
+  function typeNext() {
+    typing = 0;
+    var k = typed.shift();
+    if (!k) return;
+    tapKeys([k]);
+    typing = setTimeout(typeNext, 300);  // 120 ms down, then up long enough for the game to see it
+  }
+  function type(k) {
+    if (!k) return;
+    typed.push(k);
+    if (!typing) typeNext();
+  }
+  textInput.addEventListener('keydown', function (e) {
+    physicalKey = e.keyCode !== 229 && e.key !== 'Unidentified' && e.key !== 'Process';
+  });
+  textInput.addEventListener('keyup', function () { physicalKey = false; });
+  textInput.addEventListener('input', function (e) {
+    if (!physicalKey && uiMode === UI_TEXT) {
+      if (e.inputType === 'deleteContentBackward' || textInput.value.length < TEXT_FILL.length) {
+        type(domKey(8));
+      } else {
+        var text = e.data != null ? e.data : textInput.value.slice(TEXT_FILL.length);
+        Array.prototype.forEach.call(text.toLowerCase(), function (c) {
+          if (/[a-z0-9 ]/.test(c)) type(domKey(c.charCodeAt(0)));
+        });
+      }
+    }
+    textInput.value = TEXT_FILL;
+    try { textInput.setSelectionRange(TEXT_FILL.length, TEXT_FILL.length); } catch (err) {}
+  });
+
   function updateTouchUi() {
     document.body.classList.toggle('touch', touchMode);
+    document.documentElement.classList.toggle('touch', touchMode);
     var show = touchMode && running && !failed && help.hidden;
     if (!show && !touchUi.hidden) releaseAll();
     touchUi.hidden = !show;

@@ -2492,6 +2492,7 @@ void Game::getHiscore() {
 //-----------------------------------------------------------------------------
 
 void Game::getName(Joueur* joueur, int ijoueur) {
+    BB_WEB_UI_MODE(BB_UI_TEXT);
     char buff[30];
     char name[21];
     int i = 0;

@@ -1,5 +1,6 @@
 // Checks where the touch controls go on common phones and tablets, with
-// the game running, in each set of controls (a level, menus, cutscenes):
+// the game running, in each set of controls (a level, menus, cutscenes,
+// typing a hi-score name):
 //   - lying down, the picture fills the screen height (4:3, centred), drawn
 //     sharp-bilinear on #view at a non-integer scale; upright, it fills the
 //     width at the top, as before;
@@ -9,7 +10,8 @@
 //   - every control is fully on screen and no two controls overlap (the
 //     spot between Fire and Jump aside, which is meant to touch both);
 //   - Fire, Jump, Special, the menu arrows and Skip are at least 64 px,
-//     OK at least 72 px, pause / auto-fire / fullscreen at least 44 px;
+//     OK at least 72 px, the keyboard button 64 px tall, pause / auto-fire /
+//     fullscreen at least 44 px;
 //   - Fire and Jump are side by side or diagonal (not one column), and one
 //     touch between them presses both;
 //   - the stick zone is on the left, below the HUD, and the stick sends ONE
@@ -59,7 +61,7 @@ function check(ok, what, detail = '') {
   if (!ok) failures++;
 }
 const MIN = { 't-fire': 64, 't-jump': 64, 't-special': 64, 't-up': 64, 't-down': 64, 't-left': 64,
-              't-right': 64, 't-ok': 72, 't-skip': 64, 't-pause': 44, 't-auto': 44, 't-fs': 44 };
+              't-right': 64, 't-ok': 72, 't-skip': 64, 't-kbd': 64, 't-pause': 44, 't-auto': 44, 't-fs': 44 };
 // Surfaces under the buttons, not buttons.
 const SURFACES = ['gesture', 'stick-zone', 'stick'];
 
@@ -85,7 +87,7 @@ for (const [w, h, dpr] of DEVICES) {
   const cdp = await ctx.newCDPSession(page);
   // The intro runs now; each set of controls is shown in turn by setting the
   // mode the page would set (the game keeps the intro's mode meanwhile).
-  for (const mode of ['level', 'menu', 'scene']) {
+  for (const mode of ['level', 'menu', 'scene', 'text']) {
     await page.evaluate(m => { document.getElementById('touch').dataset.mode = m; }, mode);
     const m = await page.evaluate(() => {
       const r = el => { const b = el.getBoundingClientRect(); return [b.left, b.top, b.right, b.bottom]; };

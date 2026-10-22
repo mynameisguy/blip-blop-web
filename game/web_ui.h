@@ -14,6 +14,7 @@ enum {
     BB_UI_LEVEL = 1,      // playing a level
     BB_UI_SCENE = 2,      // cutscene or dialogue: Escape skips it
     BB_UI_PRESS_KEY = 3,  // "press a key" wait (mission briefing)
+    BB_UI_TEXT = 4,       // typing a name for the hi-score table
 };
 
 #ifdef __EMSCRIPTEN__

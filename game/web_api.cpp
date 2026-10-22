@@ -3,6 +3,8 @@
 
 #include <emscripten.h>
 
+#include <SDL.h>
+
 #include <string>
 
 #include "control_alias.h"
@@ -62,5 +64,22 @@ extern "C" EMSCRIPTEN_KEEPALIVE const char* bb_key_codes() {
 int bb_web_ui_mode = BB_UI_MENU;
 
 extern "C" EMSCRIPTEN_KEEPALIVE int bb_ui_mode() { return bb_web_ui_mode; }
+
+// Presses (down = 1) or releases a key given by its SDL keycode, as the
+// game's key bindings store it, by queueing the SDL key event a keyboard
+// would. The page's touch controls use it for bound keys that no browser
+// key event can produce, such as SDLK_MENU (the default Jump key, DIK_LMENU)
+// or SDLK_KP_DECIMAL. Pad bindings are not keys and are ignored.
+extern "C" EMSCRIPTEN_KEEPALIVE void bb_web_key(int keycode, int down) {
+    unsigned int k = (unsigned int)keycode;
+    if (k == 0 || (((k >> 10) & 0xFF) > 0 && !(k & SDLK_SCANCODE_MASK))) return;
+    SDL_Event e;
+    SDL_zero(e);
+    e.type = down ? SDL_KEYDOWN : SDL_KEYUP;
+    e.key.state = down ? SDL_PRESSED : SDL_RELEASED;
+    e.key.keysym.sym = (SDL_Keycode)k;
+    e.key.keysym.scancode = SDL_GetScancodeFromKey((SDL_Keycode)k);
+    SDL_PushEvent(&e);
+}
 
 #endif

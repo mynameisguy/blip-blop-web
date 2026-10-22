@@ -66,14 +66,21 @@ what the game shows (the game reports it through `bb_ui_mode()`,
   dead zone, gives 8 directions with hysteresis and follows the thumb), Fire,
   Jump and Special (64 px or more), a pause button and an auto-fire toggle.
   Auto-fire holds Fire down, which the game turns into continuous shooting;
-  it is let go outside levels, and remembered in `localStorage`.
+  it is let go outside levels, and remembered in `localStorage`;
+- typing a name for the hi-score table: a Keyboard button (or a tap on the
+  picture) focuses a hidden text field, which brings up the soft keyboard;
+  letters, digits, spaces and deletions typed there go to the game as key
+  presses, and OK (Return) ends the name.
 
 Held sideways the controls sit over the picture's lower corners and in the
 margins beside it; held upright, below the picture. They never cover the HUD
 along the top of the picture. They send the player 1 keys the game is set to
 (read from the game; the menus read those too), with the arrows (directions)
 or the default keys (buttons) as a fallback; the menu arrows send the arrow
-keys. A touch on the spot between Fire and Jump presses both. Every key they
+keys. A bound key no browser key event can produce (such as the default
+Jump key, SDLK_MENU) is handed to the game as an SDL key event
+(`bb_web_key()` in `game/web_api.cpp`). On touch devices the page never
+scrolls, zooms or bounces (`touch-action: none`, `overscroll-behavior: none`). A touch on the spot between Fire and Jump presses both. Every key they
 hold is let go when a finger lifts or slides off, a touch is cancelled, the
 window loses focus, the page is hidden or the set of controls changes.
 Presses vibrate briefly where the browser supports it.

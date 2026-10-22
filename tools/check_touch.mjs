@@ -16,10 +16,16 @@
 //   - after chaos (several fingers, slides off the controls, cancelled
 //     touches, window blur, a hidden page, random multi-touch) no key stays
 //     down and Blip stands still;
-//   - no control covers the HUD, lying down or upright.
+//   - no control covers the HUD, lying down or upright;
+//   - a drag beside the picture while holding Fire does not scroll or zoom,
+//     and the browser never refuses to cancel a touch event;
+//   - with the game's default keys (BB_DEFAULT_CONFIG), Jump, bound to
+//     SDLK_MENU, which no browser key produces, still jumps;
+//   - a hi-score name can be typed with the soft keyboard (a hidden text
+//     field), with a mistake deleted, and is saved.
 // Screenshots of a menu and a level, lying down and upright, go to outdir.
 //
-//   node tools/check_touch.mjs <url> [outdir] [--device WxH@R]
+//   node tools/check_touch.mjs <url> [outdir] [--device WxH@R] [--only main|defaults|name]
 // (default device 844x390@3; the upright shots use the same phone turned.)
 // Needs Playwright (npm i playwright); CHROMIUM_PATH picks the browser.
 import * as D from './game_driver.mjs';
@@ -47,8 +53,15 @@ const keyLog = () => {
       if (type === 'keydown') window.__down[e.code] = 1; else delete window.__down[e.code];
     }, true);
 };
-const { page, errors } = await D.newGamePage({ context, initScripts: [keyLog] });
-const cdp = await context.newCDPSession(page);
+let { page, errors } = await D.newGamePage({ context, initScripts: [keyLog] });
+let cdp = await context.newCDPSession(page);
+// The browser's warning when a page cancels a touch event it may no longer
+// cancel (because it started scrolling or zooming).
+let interventions = [];
+function watchConsole(p) {
+  p.on('console', m => { if (/Ignored attempt to cancel/.test(m.text())) interventions.push(m.text()); });
+}
+watchConsole(page);
 const shot = async name => { if (out) await page.screenshot({ path: `${out}/${name}.png` }); };
 
 // ---- Touch helpers (CDP touch events, several fingers) ----
@@ -176,7 +189,8 @@ async function bullets(reset = false) {
   }), reset);
 }
 
-try {
+const only = opt('only');  // main, defaults or name: run just that part
+if (!only || only === 'main') try {
   // ---- First tap: fullscreen ----
   await page.waitForFunction(() => !document.getElementById('touch').hidden, null, { timeout: 30000 });
   const vp = await box('#stage');
@@ -353,6 +367,24 @@ try {
 
   // ---- Chaos ----
   const fb = await box('#t-fire');
+  // Hold Fire and drag another finger down the right side (the margin
+  // beside the picture on a phone), then touch the picture: nothing may
+  // scroll, and the game keeps getting every touch.
+  await fdown(2, fb.cx, fb.cy);
+  const mx = W - 30, my = H * 0.4;
+  await fdown(1, mx, my);
+  for (let i = 1; i <= 8; i++) { await fmove(1, mx, my + i * 12); await sleep(16); }
+  await fup(1);
+  const pc = await box('#view:not([hidden]), #canvas');
+  await fdown(3, pc.cx, pc.cy);
+  await sleep(100);
+  await fup(3);
+  await fup(2);
+  await sleep(200);
+  const scrolled = await page.evaluate(() => [scrollX, scrollY, document.scrollingElement.scrollTop, visualViewport ? visualViewport.scale : 1]);
+  check(await held() === '' && scrolled.join() === '0,0,0,1',
+        'a drag beside the picture while holding Fire neither scrolls nor zooms the page, and lets go',
+        `scroll/zoom ${scrolled.join()}, held ${await held() || 'nothing'}`);
   const jb = await box('#t-jump');
   // Stick + Fire + Jump together; the stick finger slides over Fire, the
   // Fire finger slides off its button; then the touches are cancelled.
@@ -435,5 +467,162 @@ try {
 } catch (e) {
   check(false, e instanceof StepError ? e.message : e.stack);
 }
-check(errors.length === 0, 'no page errors', errors.slice(0, 3).join(' | '));
+check(errors.length === 0 && interventions.length === 0,
+      'no page errors, and no touch event the browser refused to cancel (no scrolling or zooming)',
+      errors.concat(interventions).slice(0, 3).join(' | '));
+await page.close();
+
+// Opens another game page in a fresh profile on the same phone, with
+// harness settings, and makes it the page the helpers act on.
+async function scenarioPage(env, routes = []) {
+  const ctx = await D.newContext({ viewport: { width: W, height: H }, deviceScaleFactor: DPR,
+                                   isMobile: true, hasTouch: true });
+  for (const [re, body] of routes) await ctx.route(re, r => r.fulfill({ status: 200, body }));
+  const setEnv = `window.bbHooks.bbEnv = Object.assign(window.bbHooks.bbEnv, ${JSON.stringify(env)});`;
+  const r = await D.newGamePage({ context: ctx, initScripts: [keyLog, setEnv] });
+  page = r.page;
+  errors = r.errors;
+  interventions = [];
+  watchConsole(page);
+  cdp = await ctx.newCDPSession(page);
+  fingers.clear();
+  await page.waitForFunction(() => !document.getElementById('touch').hidden, null, { timeout: 30000 });
+  return ctx;
+}
+// From the intro to the level (BB_START_LEVEL picks it), by taps: Skip,
+// OK (START GAME), OK (1 player), OK (Blip), then Skip at the briefing.
+async function briefingToLevel() {
+  await tapUntil(() => tap('#t-skip'), 'the main menu', s => s.title);
+  await sleep(500);
+  const h0 = (await state(page)).hash;
+  await tapUntil(() => tap('#t-ok'), 'the START GAME menu', s => s.title && s.hash !== h0);
+  await tapUntil(() => tap('#t-ok'), 'character select', s => s.charsel);
+  let last = null;
+  await waitState(page, s => {
+    const ok = s.charsel && s.blue && last && Math.abs(s.blue.x - last.x) < 1 && s.frame > last.frame;
+    if (s.blue) last = { x: s.blue.x, frame: s.frame };
+    return ok;
+  }, 5000);
+  await tapUntil(() => tap('#t-ok'), 'the briefing', s => !s.charsel);
+  if (!await waitMode(3, 60000)) throw new StepError(`no briefing; mode ${await uiMode()}`);
+  await sleep(200);
+  // (The level only counts the press once it has loaded: press again.)
+  for (let i = 0; i < 10 && await uiMode() !== 1; i++) { await tap('#t-skip'); await waitMode(1, 1500); }
+  if (await uiMode() !== 1) throw new StepError(`Skip at the briefing never started the level; mode ${await uiMode()}`);
+  await sleep(2500);  // Blip drops in
+}
+
+// ---- The game's default keys: Jump is SDLK_MENU, which no browser key
+// event produces; the page hands it to the game as an SDL key event. ----
+if (!only || only === 'defaults') try {
+  const ctx = await scenarioPage({ BB_DEFAULT_CONFIG: 1, BB_START_LEVEL: 1 });
+  const codes = await page.evaluate(() => Module.UTF8ToString(Module._bb_key_codes()).split(',').map(Number));
+  check(codes[5] === 0x40000076, 'BB_DEFAULT_CONFIG: player 1 Jump is SDLK_MENU', '0x' + codes[5].toString(16));
+  await briefingToLevel();
+  await D.still(page);
+  const jb = await box('#t-jump');
+  await page.evaluate(() => { window.__log = []; });
+  const j = await D.track(page, 1200, async () => { await fdown(1, jb.cx, jb.cy); await sleep(400); await fup(1); });
+  const dom = await page.evaluate(() => window.__log.join(' '));
+  check(j.rise > 20, 'default keys: holding Jump (SDLK_MENU) makes Blip jump', `rose ${D.fmt(j.rise)} px; DOM key events: ${dom || 'none'}`);
+  // Fire is Left Ctrl, a DOM key; the stick sends the arrows.
+  const zone = await box('#stick-zone');
+  const R = await page.evaluate(() => document.getElementById('stick').getBoundingClientRect().width / 2);
+  await fdown(1, zone.x + zone.w / 2, zone.y + zone.h * 0.6);
+  await fmove(1, zone.x + zone.w / 2 + R * 0.8, zone.y + zone.h * 0.6);
+  const fbx = await box('#t-fire');
+  await fdown(2, fbx.cx, fbx.cy);
+  const both = await held();
+  const t = await D.track(page, 1000);
+  await fup(2); await fup(1);
+  await sleep(200);
+  check(both === 'ArrowRight,ControlLeft' && t.moved > 30 && await held() === '',
+        'default keys: stick right and Fire send ArrowRight and Left Ctrl, Blip walks, all released',
+        `held ${both}, moved ${D.fmt(t.moved)} px`);
+  check(errors.length === 0 && interventions.length === 0, 'default keys: no page errors', errors.concat(interventions).slice(0, 3).join(' | '));
+  await Promise.race([ctx.close(), sleep(5000)]);
+} catch (e) {
+  check(false, 'default keys: ' + (e instanceof StepError ? e.message : e.stack));
+}
+
+// ---- Typing a hi-score name by touch ----
+// Every score in the table is -1, so any score gets in. One life in level
+// 2, walking right into the enemies until Blip dies, then game over, then
+// the name: typed on the soft keyboard (the hidden text field), with a
+// mistake deleted, then OK.
+function scoreTable(entries) {
+  const buf = Buffer.alloc(244);
+  let sum = 0;
+  entries.forEach(([score, name], i) => {
+    const key = (0x35674a1f << i) | 0;
+    const bytes = Buffer.alloc(20);
+    bytes.write(name, 'latin1');
+    sum = (sum + score) | 0;
+    for (const b of bytes) sum = (sum + b) | 0;
+    buf.writeInt32LE((score ^ key) | 0, i * 24);
+    for (let j = 0; j < 20; j += 4) buf.writeInt32LE((bytes.readInt32LE(j) ^ key) | 0, i * 24 + 4 + j);
+  });
+  buf.writeInt32LE(sum, 240);
+  return buf;
+}
+function readNames(bytes) {
+  const buf = Buffer.from(bytes), names = [];
+  for (let i = 0; i < 10; i++) {
+    const key = (0x35674a1f << i) | 0, nb = Buffer.alloc(20);
+    for (let j = 0; j < 20; j += 4) nb.writeInt32LE((buf.readInt32LE(i * 24 + 4 + j) ^ key) | 0, j);
+    names.push([(buf.readInt32LE(i * 24) ^ key) | 0, nb.toString('latin1').replace(/\0.*$/s, '')]);
+  }
+  return names;
+}
+if (!only || only === 'name') try {
+  const table = scoreTable(Array.from({ length: 10 }, () => [-1, 'NOBODY']));
+  const ctx = await scenarioPage({ BB_START_LEVEL: 2, BB_LIVES: 1 }, [[/\/data\/bb\.scr/, table]]);
+  await briefingToLevel();
+  const zone = await box('#stick-zone');
+  const R = await page.evaluate(() => document.getElementById('stick').getBoundingClientRect().width / 2);
+  await fdown(1, zone.x + zone.w / 2, zone.y + zone.h * 0.6);
+  await fmove(1, zone.x + zone.w / 2 + R * 0.8, zone.y + zone.h * 0.6);
+  let dead = false;
+  for (let i = 0; i < 18 && !dead; i++) {
+    // The level is over once the game shows anything else: game over, or
+    // straight the name entry (the held stick skips the game over screen).
+    const end = Date.now() + 10000;
+    while (!dead && Date.now() < end) { dead = await uiMode() !== 1; if (!dead) await sleep(100); }
+    if (out) await shot(`dying-${i}`);
+    // Jump now and then, in case something blocks the way.
+    if (!dead && i % 2 === 1 && await uiMode() === 1) {
+      const jb = await box('#t-jump');
+      await fdown(2, jb.cx, jb.cy); await sleep(300); await fup(2);
+    }
+  }
+  await fup(1);
+  check(dead, 'one life, walking into the enemies: Blip dies and the level ends');
+  const pic = await box('#view:not([hidden]), #canvas');
+  for (let i = 0; i < 12 && await uiMode() !== 4; i++) { await tapAt(pic.cx, pic.cy); await sleep(1000); }
+  check(await uiMode() === 4 && await touchMode() === 'text' && await visible('#t-kbd') && await visible('#t-ok'),
+        'game over, then the hi-score name entry shows the keyboard button and OK', `mode ${await uiMode()}`);
+  await sleep(1500);  // the name prompt slides in
+  await tap('#t-kbd');
+  check(await page.evaluate(() => document.activeElement && document.activeElement.id === 't-text'),
+        'the keyboard button focuses the text field (which brings up the soft keyboard)');
+  // A soft keyboard types into the field without key codes.
+  await page.keyboard.insertText('Tou');
+  await sleep(1500);
+  await page.keyboard.insertText('ch 1x');
+  await sleep(2500);
+  await page.evaluate(() => document.execCommand('delete'));
+  await sleep(800);
+  await shot('name-entry');
+  await tap('#t-ok');
+  check(await waitMode(0, 10000), 'OK ends the name entry');
+  await sleep(1000);
+  const names = readNames(await page.evaluate(() => Array.from(Module.FS.readFile('/data/bb.scr'))));
+  const entry = names.find(([, n]) => n !== 'NOBODY');
+  check(entry && entry[1] === 'TOUCH 1', 'the name typed by touch is saved in the hi-score table',
+        entry ? `"${entry[1]}" with ${entry[0]} points` : 'no new entry');
+  check(errors.length === 0 && interventions.length === 0, 'name entry: no page errors', errors.concat(interventions).slice(0, 3).join(' | '));
+  await Promise.race([ctx.close(), sleep(5000)]);
+} catch (e) {
+  check(false, 'name entry: ' + (e instanceof StepError ? e.message : e.stack));
+}
 await D.finish();
