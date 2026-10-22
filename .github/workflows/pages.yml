@@ -28,7 +28,7 @@ jobs:
       - name: Build
         run: web/build.sh
         env:
-          GA_MEASUREMENT_ID: ${{ vars.GA_MEASUREMENT_ID }}
+          GA_MEASUREMENT_ID: ${{ vars.GA_MEASUREMENT_ID || 'G-B9ZE895E8Y' }}
           GOOGLE_SITE_VERIFICATION: ${{ vars.GOOGLE_SITE_VERIFICATION }}
       - uses: actions/upload-pages-artifact@v3
         with:
