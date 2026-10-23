@@ -58,7 +58,8 @@ On touch devices the page also shows on-screen controls that change with
 what the game shows (the game reports it through `bb_ui_mode()`,
 `game/web_ui.h`; browser build only, nothing drawn changes):
 
-- in menus: big up/down/left/right arrows and OK; a swipe on the picture is
+- in menus: big up/down/left/right arrows (kept left of the menu items,
+  smaller on short screens) and OK; a swipe on the picture is
   an arrow key and a tap is Return;
 - in the intro, cutscenes, dialogue and the mission briefing: Skip (Escape,
   or Return for the briefing's "press a key"); a tap is Return;
@@ -70,8 +71,10 @@ what the game shows (the game reports it through `bb_ui_mode()`,
 - typing a name for the hi-score table: a Keyboard button (or a tap on the
   picture) focuses a hidden text field, which brings up the soft keyboard;
   letters, digits, spaces and deletions typed there go to the game as key
-  presses, and OK (Return) ends the name, dropping letters typed ahead
-  that have not reached the game yet. While the soft keyboard is up, the
+  presses through a queue (each held 60 ms, then up 60 ms, as the game
+  reads one key at a time). Keyboards that send real key codes (iOS) go
+  through the same queue. OK (Return) ends the name after everything typed
+  before it; anything typed after OK is ignored. While the soft keyboard is up, the
   picture moves up so the name and OK stay in view (`visualViewport`).
 
 Held sideways the controls sit over the picture's lower corners and in the

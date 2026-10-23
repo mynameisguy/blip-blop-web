@@ -519,6 +519,10 @@
     // Big arrows in a cross, bottom left; OK bottom right. Taps and swipes
     // on the picture work too.
     var A = clamp(Math.round(side * 0.2), 64, 84), gap = 6;
+    // Lying down, the cross stays left of the picture's middle half, where
+    // menus print their items: on short screens (an iPhone SE: 568x320)
+    // the arrows get smaller for it, down to 52 px.
+    if (!portrait) A = clamp(Math.min(A, Math.floor((pic.x + pic.w * 0.25 - L - 2 * gap - 2) / 3)), 52, 84);
     var cx = L + 1.5 * A + gap, cy = Bt - 1.5 * A - gap;
     place($('t-up'), cx - A / 2, cy - 1.5 * A - gap, A);
     place($('t-down'), cx - A / 2, cy + A / 2 + gap, A);
@@ -831,7 +835,8 @@
                                        bubbles: true, cancelable: true });
     Object.defineProperty(ev, 'keyCode', { get: function () { return k.keyCode; } });
     Object.defineProperty(ev, 'which', { get: function () { return k.keyCode; } });
-    canvas.dispatchEvent(ev);
+    sendingKey = true;
+    try { canvas.dispatchEvent(ev); } finally { sendingKey = false; }
   }
   var heldKey = {};  // DOM code -> key description, for releasing
   // Every press stays down at least MIN_HOLD ms (a few game frames: the
@@ -865,7 +870,7 @@
   // A short press (a tap or a swipe): long enough for the game to see it,
   // as it reads the keys once a frame.
   var taps = [];
-  function tapKeys(keys) {
+  function tapKeys(keys, ms) {
     var t = { keys: keys };
     taps.push(t);
     keys.forEach(press);
@@ -874,7 +879,7 @@
       if (i < 0) return;  // already released by releaseAll()
       taps.splice(i, 1);
       keys.forEach(release);
-    }, 120);
+    }, ms || 120);
   }
   function haptic() {
     try { if (navigator.vibrate) navigator.vibrate(12); } catch (err) {}
@@ -1082,6 +1087,7 @@
     if (m !== uiMode) {
       uiMode = m;
       releaseAll();
+      nameDone = false;
       touchUi.dataset.mode = m === UI_LEVEL ? 'level' : m === UI_MENU ? 'menu' : m === UI_TEXT ? 'text' : 'scene';
       if (m === UI_TEXT) openKeyboard();
       else if (document.activeElement === textInput) { textInput.blur(); canvas.focus({ preventScroll: true }); }
@@ -1098,12 +1104,19 @@
   }
 
   // Typing a hi-score name on a phone: a hidden text field brings up the
-  // soft keyboard, and what is typed into it goes to the game as key
-  // presses, one at a time (the game waits for each key to be let go).
-  // Letters, digits and spaces make the name; deleting is Backspace. Keys
-  // from a real keyboard reach the game directly, so they are skipped here.
+  // soft keyboard, and what is typed goes to the game as key presses, one
+  // at a time through a queue: the game reads each key only once the one
+  // before is let go (Input::waitClean, then waitKey, which poll the key
+  // state about every 10 ms), so each is held TYPE_DOWN ms, then let go for
+  // TYPE_UP ms. Letters, digits and spaces make the name; deleting is
+  // Backspace; OK or Return ends it, after everything typed before.
+  // Keyboards that send real key codes (iOS soft keyboards, whose keydown
+  // and keyup come almost together, or a hardware keyboard) go through the
+  // same queue while a name is typed; keyboards that only report text
+  // (Android, keyCode 229) are read from the field's input events.
   var textInput = document.getElementById('t-text');
-  var TEXT_FILL = '  ', typed = [], typing = 0, physicalKey = false;
+  var TEXT_FILL = '  ', typed = [], typing = 0, nameDone = false;
+  var TYPE_DOWN = 60, TYPE_UP = 60;
   function openKeyboard() {
     if (touchUi.hidden) return;
     textInput.value = TEXT_FILL;
@@ -1117,41 +1130,50 @@
     if (uiMode !== UI_TEXT) typed = [];
     var k = typed.shift();
     if (!k) return;
-    tapKeys([k]);
-    typing = setTimeout(typeNext, 300);  // 120 ms down, then up long enough for the game to see it
+    tapKeys([k], TYPE_DOWN);
+    typing = setTimeout(typeNext, TYPE_DOWN + TYPE_UP);
   }
   function type(k) {
-    if (!k) return;
+    if (!k || nameDone || uiMode !== UI_TEXT) return;
     typed.push(k);
     if (!typing) typeNext();
   }
-  // OK: Return, after the letter being typed (the game waits for every key
-  // to be up before it reads the next one). Letters still queued are
-  // dropped, so none of them reaches the menus that follow.
+  // OK: Return, after everything typed so far. Anything typed after it is
+  // ignored until the game leaves the name entry, so none of it reaches
+  // the menus that follow.
   function finishName() {
-    typed = [domKey(13)];
-    if (!typing) typeNext();
+    type(domKey(13));
+    nameDone = true;
   }
-  textInput.addEventListener('keydown', function (e) {
-    physicalKey = e.keyCode !== 229 && e.key !== 'Unidentified' && e.key !== 'Process';
-    if (e.key === 'Enter' && uiMode === UI_TEXT) {
-      // The soft keyboard's Done / Return: the same as OK.
-      e.preventDefault();
-      e.stopPropagation();
-      if (!e.repeat) finishName();
-    }
-  });
-  textInput.addEventListener('keyup', function () { physicalKey = false; });
+  function typeChars(text) {
+    Array.prototype.forEach.call(text.toLowerCase(), function (c) {
+      if (/[a-z0-9 ]/.test(c)) type(domKey(c.charCodeAt(0)));
+    });
+  }
+  var sendingKey = false;  // set while the page itself sends a key to the game
+  function textKeys() { return uiMode === UI_TEXT && touchMode && !touchUi.hidden && !sendingKey; }
+  window.addEventListener('keydown', function (e) {
+    if (!textKeys() || e.keyCode === 229 || e.key === 'Unidentified' || e.key === 'Process') return;
+    var k = e.key;
+    if (k !== 'Enter' && k !== 'Backspace' && (k.length !== 1 || e.ctrlKey || e.metaKey || e.altKey)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (k === 'Enter') { if (!e.repeat) finishName(); }
+    else if (k === 'Backspace') type(domKey(8));
+    else typeChars(k);
+  }, true);
+  window.addEventListener('keyup', function (e) {
+    if (!textKeys() || e.keyCode === 229) return;
+    var k = e.key;
+    if (k !== 'Enter' && k !== 'Backspace' && (k.length !== 1 || e.ctrlKey || e.metaKey || e.altKey)) return;
+    e.preventDefault();
+    e.stopPropagation();
+  }, true);
   textInput.addEventListener('input', function (e) {
-    if (!physicalKey && uiMode === UI_TEXT) {
-      if (e.inputType === 'deleteContentBackward' || textInput.value.length < TEXT_FILL.length) {
-        type(domKey(8));
-      } else {
-        var text = e.data != null ? e.data : textInput.value.slice(TEXT_FILL.length);
-        Array.prototype.forEach.call(text.toLowerCase(), function (c) {
-          if (/[a-z0-9 ]/.test(c)) type(domKey(c.charCodeAt(0)));
-        });
-      }
+    if (uiMode === UI_TEXT) {
+      if (e.inputType === 'deleteContentBackward' || textInput.value.length < TEXT_FILL.length) type(domKey(8));
+      else if (e.inputType === 'insertLineBreak') finishName();
+      else typeChars(e.data != null ? e.data : textInput.value.slice(TEXT_FILL.length));
     }
     textInput.value = TEXT_FILL;
     try { textInput.setSelectionRange(TEXT_FILL.length, TEXT_FILL.length); } catch (err) {}

@@ -24,8 +24,10 @@
 //   - a touch does not stall the game (frame gaps around it), and 30 ms
 //     taps on Jump, pause and OK work;
 //   - a hi-score name can be typed with the soft keyboard (a hidden text
-//     field), with a mistake deleted, and is saved; letters typed ahead
-//     and still queued at OK are dropped.
+//     field) at a normal speed, from keyboards that report only text and
+//     ones that send key codes, with a mistake deleted and OK tapped right
+//     after the last key, and is saved whole; nothing typed after OK
+//     reaches the game.
 // Screenshots of a menu and a level, lying down and upright, go to outdir.
 //
 //   node tools/check_touch.mjs <url> [outdir] [--device WxH@R] [--only main|defaults|name]
@@ -423,10 +425,8 @@ if (!only || only === 'main') try {
         'pause opens the game menu, with the menu controls');
   await sleep(300);
   check(await held() === '', 'nothing held in the pause menu (auto-fire let go)', await held());
-  // (A press while the menu still settles can be dropped by the game, as a
-  // key press would be: tap again then.)
-  for (let i = 0; i < 3 && await uiMode() !== 1; i++) { await tap('#t-ok'); await waitMode(1, 2000); }
-  check(await uiMode() === 1, 'OK on RESUME goes back to the level');
+  await tap('#t-ok');
+  check(await waitMode(1, 5000), 'OK on RESUME goes back to the level');
   await sleep(300);
   check(await held() === 'KeyX', 'back in the level, auto-fire holds Fire again', await held());
   await tap('#t-auto');
@@ -691,32 +691,36 @@ if (!only || only === 'name') try {
   await tap('#t-kbd');
   check(await page.evaluate(() => document.activeElement && document.activeElement.id === 't-text'),
         'the keyboard button focuses the text field (which brings up the soft keyboard)');
-  // A soft keyboard types into the field without key codes.
-  await page.keyboard.insertText('Tou');
-  await sleep(1500);
-  await page.keyboard.insertText('ch 1x');
-  await sleep(2500);
-  await page.evaluate(() => document.execCommand('delete'));
-  await sleep(800);
+  // Typed at a normal speed (about 6 keys a second), mixing the two kinds
+  // of soft keyboard: one that only reports text (Android: input events,
+  // no key codes) and one that sends real key codes with keydown and keyup
+  // almost together (iOS). A mistake is deleted with Backspace, and OK is
+  // tapped right after the last key, before the game has caught up: the
+  // whole name still goes in, then Return. Letters typed after OK are
+  // ignored and nothing reaches the menus that follow.
+  const t0 = Date.now();
+  for (const c of 'Tou') { await page.keyboard.insertText(c); await sleep(150); }
+  for (const c of 'CH') { await page.keyboard.press('Key' + c); await sleep(150); }
+  for (const c of ' 1x') { await page.keyboard.insertText(c); await sleep(150); }
+  await page.keyboard.press('Backspace');
+  const typedMs = Date.now() - t0;
   await shot('name-entry');
-  // Typing far ahead of the game (40 letters at once), then OK 1.2 s later:
-  // the letters still queued are dropped, none reaches the menus.
-  await page.keyboard.insertText('a'.repeat(40));
-  await sleep(1200);
   await page.evaluate(() => { window.__log = []; });
   await tap('#t-ok');
+  await page.keyboard.insertText('zz');
   check(await waitMode(0, 10000), 'OK ends the name entry');
-  await sleep(4000);
+  await sleep(3000);
   // (Keys after OK's Return: none at all.)
   const leaked = await page.evaluate(() => {
     const i = window.__log.indexOf('keydown Enter');
     return i < 0 ? ['no Return'] : window.__log.slice(i + 1).filter(l => l.startsWith('keydown'));
   });
-  check(leaked.length === 0, 'letters still queued at OK never reach the game afterwards', leaked.slice(0, 5).join(' ') || 'none');
+  check(leaked.length === 0, 'no key reaches the game after OK\'s Return (letters typed after OK are ignored)', leaked.slice(0, 5).join(' ') || 'none');
   const names = readNames(await page.evaluate(() => Array.from(Module.FS.readFile('/data/bb.scr'))));
   const entry = names.find(([, n]) => n !== 'NOBODY');
-  check(entry && /^TOUCH 1A{0,8}$/.test(entry[1]), 'the name typed by touch is saved in the hi-score table (TOUCH 1, then the few letters typed ahead before OK)',
-        entry ? `"${entry[1]}" with ${entry[0]} points` : 'no new entry');
+  check(entry && entry[1] === 'TOUCH 1',
+        'the whole name typed at normal speed (text-only and key-code keyboards, Backspace), OK right after: saved',
+        (entry ? `"${entry[1]}" with ${entry[0]} points` : 'no new entry') + `; typed in ${typedMs} ms`);
   check(errors.length === 0 && interventions.length === 0, 'name entry: no page errors', errors.concat(interventions).slice(0, 3).join(' | '));
   await Promise.race([ctx.close(), sleep(5000)]);
 } catch (e) {

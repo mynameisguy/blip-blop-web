@@ -9,7 +9,10 @@
 //     controls only cover the picture's lower corners (its lower 4/5);
 //   - every control is fully on screen and no two controls overlap (the
 //     spot between Fire and Jump aside, which is meant to touch both);
-//   - Fire, Jump, Special, the menu arrows and Skip are at least 64 px,
+//   - in menus, lying down, no arrow and not OK covers the picture's middle
+//     half, where the menu items are;
+//   - Fire, Jump, Special, the menu arrows and Skip are at least 64 px
+//     (the arrows 52 px lying down on a screen under 380 px tall),
 //     OK at least 72 px, the keyboard button 64 px tall, pause / auto-fire /
 //     fullscreen at least 44 px;
 //   - Fire and Jump are side by side or diagonal (not one column), and one
@@ -126,10 +129,21 @@ for (const [w, h, dpr] of DEVICES) {
         if (hits(a[1], b[1])) pairs.push(`${a[0]}/${b[0]}`);
       }
     check(pairs.length === 0, `${tag}: no two controls overlap`, pairs.join(' ') || '');
-    const small = buttons.filter(([id, b]) => MIN[id] && Math.min(b[2] - b[0], b[3] - b[1]) < MIN[id] - 0.5)
+    // (Lying down on a short screen the menu arrows may shrink to 52 px, to
+    // stay clear of the menu.)
+    const minOf = id => (/^t-(up|down|left|right)$/.test(id) && w > h && h < 380 ? 52 : MIN[id]);
+    const small = buttons.filter(([id, b]) => MIN[id] && Math.min(b[2] - b[0], b[3] - b[1]) < minOf(id) - 0.5)
       .map(([id, b]) => `${id} ${Math.round(Math.min(b[2] - b[0], b[3] - b[1]))}`);
     const sizes = buttons.filter(([id]) => MIN[id]).map(([id, b]) => `${id.slice(2)} ${Math.round(b[2] - b[0])}`).join(', ');
     check(small.length === 0, `${tag}: buttons big enough`, small.length ? 'too small: ' + small.join(', ') : sizes);
+    // Menus: lying down, no arrow and not OK over the picture's middle half
+    // (x from 1/4 to 3/4 of its width, below the HUD), where menu items are.
+    if (mode === 'menu' && w > h) {
+      const mid = [pl + (pr - pl) * 0.25, hudBottom, pl + (pr - pl) * 0.75, pb];
+      const over = buttons.filter(([, b]) => hits(b, mid)).map(p => p[0]);
+      check(over.length === 0, `${tag}: no menu control over the menu (the picture's middle half)`,
+            `middle ${mid.map(Math.round)}; over it: ${over.join(' ') || 'none'}`);
+    }
     if (h > w) {
       const under = buttons.filter(([, b]) => b[1] < pb - 0.5).map(p => p[0]);
       check(under.length === 0, `${tag}: upright, every control below the picture`, under.join(' '));
