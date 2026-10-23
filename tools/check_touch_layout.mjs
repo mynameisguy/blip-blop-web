@@ -175,6 +175,7 @@ for (const [w, h, dpr] of DEVICES) {
       await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [mid] });
       const both = await page.evaluate(() => Object.keys(window.__down).sort());
       await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+      await page.waitForTimeout(80);  // (every press is held at least 50 ms)
       const after = await page.evaluate(() => Object.keys(window.__down).length);
       check(both.join() === 'KeyX,Space' && after === 0,
             `${label}: one touch between Fire and Jump presses both, and releases both`,
@@ -190,6 +191,7 @@ for (const [w, h, dpr] of DEVICES) {
       const held = await page.evaluate(() => Object.keys(window.__down).sort());
       const stickAt = await page.evaluate(() => { const b = document.getElementById('stick').getBoundingClientRect(); return [b.left + b.width / 2, b.top + b.height / 2]; });
       await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+      await page.waitForTimeout(80);
       const left = await page.evaluate(() => Object.keys(window.__down).length);
       check(held.join() === 'KeyD' && left === 0, `${label}: stick right sends only the player 1 key, released on lift`,
             `held ${held.join() || 'none'}, after lift ${left}`);

@@ -110,7 +110,8 @@
      what the game shows (data-mode): a floating stick and Fire / Jump /
      Special in a level, arrows and OK in menus, Skip in cutscenes. They are
      semi-transparent and may cover the picture's lower corners, never the
-     HUD along its top. */
+     HUD along its top. A dark fill under a light edge (and a dark outline
+     outside it) keeps them visible over bright and dark scenery alike. */
   #touch {
     position: absolute; inset: 0; z-index: 2; pointer-events: none;
     -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
@@ -124,21 +125,24 @@
   /* In a level the stick appears where the left thumb lands in this zone. */
   #stick {
     pointer-events: none; border-radius: 50%;
-    background: rgba(255, 255, 255, .08); border: 2px solid rgba(255, 255, 255, .3);
+    background: rgba(0, 0, 0, .2); border: 2px solid rgba(255, 255, 255, .45);
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, .45);
   }
   #touch #stick { pointer-events: none; }
   #stick.idle { opacity: .45; }
   #stick-knob {
     position: absolute; border-radius: 50%; left: 50%; top: 50%;
-    background: rgba(255, 255, 255, .3); border: 2px solid rgba(255, 255, 255, .55);
+    background: rgba(255, 255, 255, .3); border: 2px solid rgba(255, 255, 255, .6);
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, .45);
     box-sizing: border-box;
   }
   #stick.on #stick-knob { background: rgba(255, 204, 51, .5); border-color: var(--accent); }
   .tbtn {
     display: flex; align-items: center; justify-content: center;
     border-radius: 50%; color: rgba(255, 255, 255, .9); font-size: 15px; font-weight: 600;
-    background: rgba(255, 255, 255, .12); border: 1px solid rgba(255, 255, 255, .35);
-    padding: 0; text-shadow: 0 1px 2px #000;
+    background: rgba(0, 0, 0, .3); border: 1.5px solid rgba(255, 255, 255, .55);
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, .45);
+    padding: 0; text-shadow: 0 0 2px #000, 0 1px 2px #000;
   }
   .tbtn.on { background: rgba(255, 204, 51, .45); border-color: var(--accent); }
   .tbtn.small { font-size: 11px; border-radius: 12px; }
@@ -149,18 +153,20 @@
   /* Pause: two bars. */
   #t-pause::before, #t-pause::after {
     content: ''; width: 5px; height: 16px; margin: 0 2.5px; background: rgba(255, 255, 255, .9);
+    box-shadow: 0 0 2px #000;
   }
   /* Menu arrows: a triangle each. */
   .tbtn.arrow { border-radius: 14px; }
-  .tbtn.arrow i { width: 0; height: 0; border: 13px solid transparent; }
+  .tbtn.arrow i { width: 0; height: 0; border: 13px solid transparent;
+                 filter: drop-shadow(0 0 1.5px #000); }
   .arrow.up i { border-bottom: 18px solid #fff; border-top-width: 0; }
   .arrow.down i { border-top: 18px solid #fff; border-bottom-width: 0; }
   .arrow.left i { border-right: 18px solid #fff; border-left-width: 0; }
   .arrow.right i { border-left: 18px solid #fff; border-right-width: 0; }
   /* Between Fire and Jump: one thumb here presses both. */
   #t-both {
-    border-radius: 50%; background: rgba(255, 255, 255, .06);
-    border: 1px dashed rgba(255, 255, 255, .25);
+    border-radius: 50%; background: rgba(0, 0, 0, .18);
+    border: 1px dashed rgba(255, 255, 255, .45);
   }
   #t-both.on { background: rgba(255, 204, 51, .3); }
   body.touch #toolbar { display: none; }
@@ -335,6 +341,11 @@
     var left = snap((dw - w) / 2, dpr);
     var top = portrait ? snap(ins.top * dpr, dpr)
       : sideways ? snap(ins.top * dpr + (room - h) / 2, dpr) : snap((dh - h) / 2, dpr);
+    // The soft keyboard is up (a hi-score name is typed): move the picture
+    // up so the name's row (y 260 of 480) sits in the part still visible.
+    var kb = keyboardTop();
+    if (kb !== null)
+      top = snap(Math.min(top, Math.max(kb * dpr * 0.45 - h * 260 / 480, kb * dpr - h)), dpr);
     // The size is set in device pixels and scaled down by the ratio with a
     // transform: a CSS width such as 640 * 2 / 1.1 px cannot be stored
     // exactly, a transform can.
@@ -346,7 +357,15 @@
     if ((portrait || sideways) && !sharp) canvas.classList.remove('smooth');
     setSharp(sharp, w, h, left, top, dpr);
     updateTouchUi();
-    layoutTouch({ x: Math.round(left / dpr), y: Math.round(top / dpr), w: w / dpr, h: h / dpr }, portrait);
+    layoutTouch({ x: Math.round(left / dpr), y: Math.round(top / dpr), w: w / dpr, h: h / dpr, kb: kb }, portrait);
+  }
+  // Where the soft keyboard starts (CSS pixels from the top of the stage)
+  // while a name is typed on a touch device, or null.
+  function keyboardTop() {
+    var vv = window.visualViewport;
+    if (!touchMode || uiMode !== UI_TEXT || !vv) return null;
+    var bottom = vv.offsetTop + vv.height;
+    return bottom < stage.clientHeight - 40 ? Math.max(120, Math.round(bottom)) : null;
   }
 
   // Non-integer upscaling ("sharp bilinear"): the game picture is copied
@@ -424,6 +443,7 @@
     var W = stage.clientWidth, H = stage.clientHeight, ins = insets(), g = 8;
     var $ = function (id) { return document.getElementById(id); };
     var L = ins.left + g, R = W - ins.right - g, T = ins.top + g, Bt = H - ins.bottom - g;
+    if (pic.kb != null) Bt = Math.min(Bt, pic.kb - g);  // above the soft keyboard
     var hudBottom = pic.y + pic.h * HUD_SHARE;
     var hasFs = !fsBtn.hidden;
     var fs = $('t-fs');
@@ -524,6 +544,12 @@
     catch (err) { ro.observe(stage); }
   }
   window.addEventListener('resize', layout);
+  if (window.visualViewport) {
+    // The soft keyboard opening or closing (touch devices only).
+    ['resize', 'scroll'].forEach(function (type) {
+      window.visualViewport.addEventListener(type, function () { if (touchMode) layout(); });
+    });
+  }
   document.addEventListener('fullscreenchange', layout);
   document.addEventListener('webkitfullscreenchange', layout);
 
@@ -690,10 +716,26 @@
     if (!(e.target.closest && e.target.closest('button, .card'))) e.preventDefault();
     canvas.focus({ preventScroll: true });
   });
-  stage.addEventListener('touchstart', function () {
+  // A touch on the controls is cancelled right away (touchstart, not
+  // passive). Otherwise the browser holds back timers after it, waiting to
+  // see whether the page scrolls, and the game, whose main loop runs on
+  // timers, freezes for about 120 ms on every touch; short taps were lost.
+  // Cancelling it also keeps the browser from making mouse events and
+  // moving focus out of the name field. Not on the fullscreen button,
+  // whose click must happen, nor on panels and the start screen.
+  stage.addEventListener('touchstart', function (e) {
+    var t = e.target;
+    var mine = t.closest && t.closest('#touch') && !t.closest('#t-fs');
+    if (mine || t === stage || t === view) e.preventDefault();
+    if (mine && t.closest('#t-kbd')) {
+      // The soft keyboard only opens for a focus made inside the touch's
+      // own handler (iOS).
+      openKeyboard();
+      return;
+    }
     // (Not while a name is typed: that would close the soft keyboard.)
     if (uiMode !== UI_TEXT) canvas.focus({ preventScroll: true });
-  }, { passive: true });
+  }, { passive: false });
 
   // ---- Touch controls ---------------------------------------------------------
   // The controls send the same KeyboardEvents a keyboard would. SDL listens
@@ -792,14 +834,33 @@
     canvas.dispatchEvent(ev);
   }
   var heldKey = {};  // DOM code -> key description, for releasing
+  // Every press stays down at least MIN_HOLD ms (a few game frames: the
+  // game reads the keys once a frame), so a quick tap is never missed.
+  var MIN_HOLD = 50, downAt = {}, upTimer = {};
   function press(k) {
     heldKey[k.code] = k;
-    if (!held[k.code]) sendKey('keydown', k);
+    if (upTimer[k.code]) {
+      // Pressed again while its release waits: it simply stays down.
+      clearTimeout(upTimer[k.code]);
+      delete upTimer[k.code];
+      held[k.code] = 1;
+      return;
+    }
+    if (!held[k.code]) { sendKey('keydown', k); downAt[k.code] = performance.now(); }
     held[k.code] = (held[k.code] || 0) + 1;
   }
+  function keyUp(code) {
+    delete upTimer[code];
+    delete held[code];
+    sendKey('keyup', heldKey[code]);
+  }
   function release(k) {
-    if (!held[k.code]) return;
-    if (--held[k.code] === 0) { delete held[k.code]; sendKey('keyup', k); }
+    if (!held[k.code] || upTimer[k.code]) return;
+    if (--held[k.code] === 0) {
+      var wait = MIN_HOLD - (performance.now() - downAt[k.code]);
+      if (wait > 1) { held[k.code] = 1; upTimer[k.code] = setTimeout(keyUp, wait, k.code); }
+      else keyUp(k.code);
+    }
   }
   // A short press (a tap or a swipe): long enough for the game to see it,
   // as it reads the keys once a frame.
@@ -928,8 +989,12 @@
     activeStick = null;
     taps = [];
     autoKeys = null;
-    // Nothing should still be held, but make sure the game sees every key up.
-    Object.keys(held).forEach(function (code) { delete held[code]; sendKey('keyup', heldKey[code]); });
+    typed = [];
+    clearTimeout(typing);
+    typing = 0;
+    // Nothing should still be held, but make sure the game sees every key up
+    // (now, without waiting for the minimum hold).
+    Object.keys(held).forEach(function (code) { clearTimeout(upTimer[code]); keyUp(code); });
     refreshLit();
   }
 
@@ -943,6 +1008,10 @@
     if (t.id === 't-kbd') {
       p.kind = 'none';
       openKeyboard();
+      haptic();
+    } else if (t.id === 't-ok' && uiMode === UI_TEXT) {
+      p.kind = 'none';
+      finishName();
       haptic();
     } else if (t.id === 't-auto') {
       p.kind = 'none';
@@ -1016,10 +1085,17 @@
       touchUi.dataset.mode = m === UI_LEVEL ? 'level' : m === UI_MENU ? 'menu' : m === UI_TEXT ? 'text' : 'scene';
       if (m === UI_TEXT) openKeyboard();
       else if (document.activeElement === textInput) { textInput.blur(); canvas.focus({ preventScroll: true }); }
+      layout();  // (the picture moves up out of the soft keyboard's way while a name is typed)
     }
     updateAutoFire();
   }
-  setInterval(pollUiMode, 50);
+  // Only while the touch controls are in use (not on a desktop).
+  var pollTimer = 0;
+  function updatePoll() {
+    var want = touchMode && running && !failed;
+    if (want && !pollTimer) pollTimer = setInterval(pollUiMode, 50);
+    else if (!want && pollTimer) { clearInterval(pollTimer); pollTimer = 0; }
+  }
 
   // Typing a hi-score name on a phone: a hidden text field brings up the
   // soft keyboard, and what is typed into it goes to the game as key
@@ -1038,6 +1114,7 @@
   }
   function typeNext() {
     typing = 0;
+    if (uiMode !== UI_TEXT) typed = [];
     var k = typed.shift();
     if (!k) return;
     tapKeys([k]);
@@ -1048,8 +1125,21 @@
     typed.push(k);
     if (!typing) typeNext();
   }
+  // OK: Return, after the letter being typed (the game waits for every key
+  // to be up before it reads the next one). Letters still queued are
+  // dropped, so none of them reaches the menus that follow.
+  function finishName() {
+    typed = [domKey(13)];
+    if (!typing) typeNext();
+  }
   textInput.addEventListener('keydown', function (e) {
     physicalKey = e.keyCode !== 229 && e.key !== 'Unidentified' && e.key !== 'Process';
+    if (e.key === 'Enter' && uiMode === UI_TEXT) {
+      // The soft keyboard's Done / Return: the same as OK.
+      e.preventDefault();
+      e.stopPropagation();
+      if (!e.repeat) finishName();
+    }
   });
   textInput.addEventListener('keyup', function () { physicalKey = false; });
   textInput.addEventListener('input', function (e) {
@@ -1073,6 +1163,7 @@
     var show = touchMode && running && !failed && help.hidden;
     if (!show && !touchUi.hidden) releaseAll();
     touchUi.hidden = !show;
+    updatePoll();
   }
   window.addEventListener('touchstart', function () {
     if (!touchMode) { touchMode = true; layout(); updateStart(); }

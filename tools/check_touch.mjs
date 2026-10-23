@@ -21,8 +21,11 @@
 //     and the browser never refuses to cancel a touch event;
 //   - with the game's default keys (BB_DEFAULT_CONFIG), Jump, bound to
 //     SDLK_MENU, which no browser key produces, still jumps;
+//   - a touch does not stall the game (frame gaps around it), and 30 ms
+//     taps on Jump, pause and OK work;
 //   - a hi-score name can be typed with the soft keyboard (a hidden text
-//     field), with a mistake deleted, and is saved.
+//     field), with a mistake deleted, and is saved; letters typed ahead
+//     and still queued at OK are dropped.
 // Screenshots of a menu and a level, lying down and upright, go to outdir.
 //
 //   node tools/check_touch.mjs <url> [outdir] [--device WxH@R] [--only main|defaults|name]
@@ -43,6 +46,28 @@ await D.setup(url, out);
 const context = await D.newContext({ viewport: { width: W, height: H }, deviceScaleFactor: DPR,
                                      isMobile: true, hasTouch: true });
 // Every key the page sends the game: held keys, and a log.
+// The time of every game frame (window.__ft), to see whether a touch
+// stalls the game.
+const frameTimes = () => {
+  const f = window.bbHooks.onFrame;
+  window.__ft = [];
+  window.bbHooks.onFrame = function (...a) {
+    window.__ft.push(performance.now());
+    if (window.__ft.length > 600) window.__ft.splice(0, 300);
+    return f.apply(this, a);
+  };
+};
+// A stand-in for window.visualViewport whose height drops by window.__kb
+// px, as when a soft keyboard comes up (the emulator has none).
+const fakeKeyboard = () => {
+  const real = window.visualViewport;
+  if (!real) return;
+  const fake = new EventTarget();
+  for (const k of ['offsetLeft', 'offsetTop', 'pageLeft', 'pageTop', 'width', 'scale'])
+    Object.defineProperty(fake, k, { get: () => real[k] });
+  Object.defineProperty(fake, 'height', { get: () => real.height - (window.__kb || 0) });
+  Object.defineProperty(window, 'visualViewport', { configurable: true, get: () => fake });
+};
 const keyLog = () => {
   window.__down = {};
   window.__log = [];
@@ -53,7 +78,7 @@ const keyLog = () => {
       if (type === 'keydown') window.__down[e.code] = 1; else delete window.__down[e.code];
     }, true);
 };
-let { page, errors } = await D.newGamePage({ context, initScripts: [keyLog] });
+let { page, errors } = await D.newGamePage({ context, initScripts: [keyLog, frameTimes] });
 let cdp = await context.newCDPSession(page);
 // The browser's warning when a page cancels a touch event it may no longer
 // cancel (because it started scrolling or zooming).
@@ -72,15 +97,21 @@ async function sendTouches(type) {
 }
 async function fdown(id, x, y) { fingers.set(id, [x, y]); await sendTouches('touchStart'); }
 async function fmove(id, x, y) { fingers.set(id, [x, y]); await sendTouches('touchMove'); }
+// Lifts one finger; the others stay down. (CDP: a touchEnd lists the
+// points that end; an empty one ends them all.)
 async function fup(id) {
+  const at = fingers.get(id);
   fingers.delete(id);
-  await sendTouches(fingers.size ? 'touchMove' : 'touchEnd');
+  if (!at) return;
+  if (!fingers.size) return sendTouches('touchEnd');
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [{ x: at[0], y: at[1], id, radiusX: 6, radiusY: 6 }] });
 }
 async function fcancel() { fingers.clear(); await sendTouches('touchCancel'); }
 async function box(sel) {
   return page.$eval(sel, e => { const b = e.getBoundingClientRect(); return { x: b.x, y: b.y, w: b.width, h: b.height, cx: b.x + b.width / 2, cy: b.y + b.height / 2 }; });
 }
-async function tapAt(x, y, ms = 150) { await fdown(1, x, y); await sleep(ms); await fup(1); await sleep(100); }
+// A quick tap, as a thumb makes one.
+async function tapAt(x, y, ms = 40) { await fdown(1, x, y); await sleep(ms); await fup(1); await sleep(100); }
 async function tap(sel, ms) { const b = await box(sel); await tapAt(b.cx, b.cy, ms); }
 // A swipe on the picture, starting at its centre.
 async function swipe(dy, dx = 0) {
@@ -314,9 +345,12 @@ if (!only || only === 'main') try {
         `${wobble} key event(s) while wobbling, then ${into}`);
   // Follow: drag far right, then back by 1.5 radii: the stick followed, so
   // that is already left of its centre.
+  // (A key let go less than 50 ms after its press is held to 50 ms.)
   await fmove(1, sx + R * 3, sy);
+  await sleep(80);
   const far = await held();
   await fmove(1, sx + R * 1.5, sy);
+  await sleep(80);
   const back = await held();
   const sc = await page.evaluate(() => { const b = document.getElementById('stick').getBoundingClientRect(); return b.left + b.width / 2; });
   await fup(1);
@@ -327,6 +361,43 @@ if (!only || only === 'main') try {
   // ---- Jump ----
   const j = await D.track(page, 1200, async () => { await tap('#t-jump', 300); });
   check(j.rise > 20, 'Jump makes Blip jump', `rose ${D.fmt(j.rise)} px`);
+  await D.still(page);
+
+  // ---- Touches do not stall the game; quick taps count ----
+  // The longest time between two game frames around a 30 ms touch, on the
+  // stick zone, a button and the picture, against the longest without one.
+  const gap = async (from, to) => page.evaluate(([a, b]) => {
+    const t = window.__ft.filter(x => x >= a && x <= b);
+    let g = 0;
+    for (let i = 1; i < t.length; i++) g = Math.max(g, t[i] - t[i - 1]);
+    return Math.round(g);
+  }, [from, to]);
+  const now = () => page.evaluate(() => performance.now());
+  let t1 = await now();
+  await sleep(400);
+  const idleGap = await gap(t1, await now());
+  const pv = await box('#view:not([hidden]), #canvas'), sz = await box('#stick-zone'), sp = await box('#t-special');
+  const gaps = [];
+  for (const [name, x, y] of [['stick zone', sz.cx, sz.cy], ['Special', sp.cx, sp.cy], ['picture', pv.cx, pv.y + pv.h * 0.3]]) {
+    await sleep(300);
+    t1 = await now();
+    await fdown(1, x, y); await sleep(30); await fup(1);
+    await sleep(300);
+    gaps.push(`${name} ${await gap(t1, await now())} ms`);
+  }
+  const worst = Math.max(...gaps.map(g => parseInt(g.split(' ').at(-2))));
+  check(worst < 50 && worst < idleGap + 25, 'a touch does not stall the game (longest frame gap around a 30 ms touch)',
+        `${gaps.join(', ')}; ${idleGap} ms without a touch`);
+  await D.still(page);
+  const jq = await D.track(page, 1200, async () => { await tap('#t-jump', 30); });
+  check(jq.rise > 10, 'a 30 ms tap on Jump still jumps', `rose ${D.fmt(jq.rise)} px`);
+  await D.still(page);
+  await tap('#t-pause', 30);
+  check(await waitMode(0, 3000), 'a 30 ms tap on pause opens the game menu', `mode ${await uiMode()}`);
+  await sleep(500);
+  await tap('#t-ok', 30);
+  check(await waitMode(1, 3000), 'a 30 ms tap on OK resumes', `mode ${await uiMode()}`);
+  await sleep(500);
   await D.still(page);
 
   // ---- Auto-fire ----
@@ -352,8 +423,10 @@ if (!only || only === 'main') try {
         'pause opens the game menu, with the menu controls');
   await sleep(300);
   check(await held() === '', 'nothing held in the pause menu (auto-fire let go)', await held());
-  await tap('#t-ok');
-  check(await waitMode(1, 5000), 'OK on RESUME goes back to the level');
+  // (A press while the menu still settles can be dropped by the game, as a
+  // key press would be: tap again then.)
+  for (let i = 0; i < 3 && await uiMode() !== 1; i++) { await tap('#t-ok'); await waitMode(1, 2000); }
+  check(await uiMode() === 1, 'OK on RESUME goes back to the level');
   await sleep(300);
   check(await held() === 'KeyX', 'back in the level, auto-fire holds Fire again', await held());
   await tap('#t-auto');
@@ -474,12 +547,12 @@ await page.close();
 
 // Opens another game page in a fresh profile on the same phone, with
 // harness settings, and makes it the page the helpers act on.
-async function scenarioPage(env, routes = []) {
+async function scenarioPage(env, routes = [], extra = []) {
   const ctx = await D.newContext({ viewport: { width: W, height: H }, deviceScaleFactor: DPR,
                                    isMobile: true, hasTouch: true });
   for (const [re, body] of routes) await ctx.route(re, r => r.fulfill({ status: 200, body }));
   const setEnv = `window.bbHooks.bbEnv = Object.assign(window.bbHooks.bbEnv, ${JSON.stringify(env)});`;
-  const r = await D.newGamePage({ context: ctx, initScripts: [keyLog, setEnv] });
+  const r = await D.newGamePage({ context: ctx, initScripts: [keyLog, frameTimes, setEnv, ...extra] });
   page = r.page;
   errors = r.errors;
   interventions = [];
@@ -576,7 +649,7 @@ function readNames(bytes) {
 }
 if (!only || only === 'name') try {
   const table = scoreTable(Array.from({ length: 10 }, () => [-1, 'NOBODY']));
-  const ctx = await scenarioPage({ BB_START_LEVEL: 2, BB_LIVES: 1 }, [[/\/data\/bb\.scr/, table]]);
+  const ctx = await scenarioPage({ BB_START_LEVEL: 2, BB_LIVES: 1 }, [[/\/data\/bb\.scr/, table]], [fakeKeyboard]);
   await briefingToLevel();
   const zone = await box('#stick-zone');
   const R = await page.evaluate(() => document.getElementById('stick').getBoundingClientRect().width / 2);
@@ -602,6 +675,19 @@ if (!only || only === 'name') try {
   check(await uiMode() === 4 && await touchMode() === 'text' && await visible('#t-kbd') && await visible('#t-ok'),
         'game over, then the hi-score name entry shows the keyboard button and OK', `mode ${await uiMode()}`);
   await sleep(1500);  // the name prompt slides in
+  // The soft keyboard covering the lower 55% of the screen: the picture
+  // moves up so the name's row (260 of 480) shows, and OK sits above it.
+  const kbH = Math.round(H * 0.55);
+  await page.evaluate(kb => { window.__kb = kb; visualViewport.dispatchEvent(new Event('resize')); }, kbH);
+  await sleep(300);
+  const kbPic = await box('#view:not([hidden]), #canvas'), kbOk = await box('#t-ok'), kbKbd = await box('#t-kbd');
+  const rowY = kbPic.y + kbPic.h * 260 / 480;
+  if (out) await shot('name-keyboard');
+  check(rowY > 4 && rowY < H - kbH - 4 && kbOk.y >= 0 && kbOk.y + kbOk.h <= H - kbH && kbKbd.y + kbKbd.h <= H - kbH,
+        'with the soft keyboard up, the name row and OK stay in view above it',
+        `keyboard from y ${H - kbH}; name row at ${Math.round(rowY)}, OK ${Math.round(kbOk.y)}-${Math.round(kbOk.y + kbOk.h)}`);
+  await page.evaluate(() => { window.__kb = 0; visualViewport.dispatchEvent(new Event('resize')); });
+  await sleep(300);
   await tap('#t-kbd');
   check(await page.evaluate(() => document.activeElement && document.activeElement.id === 't-text'),
         'the keyboard button focuses the text field (which brings up the soft keyboard)');
@@ -613,12 +699,23 @@ if (!only || only === 'name') try {
   await page.evaluate(() => document.execCommand('delete'));
   await sleep(800);
   await shot('name-entry');
+  // Typing far ahead of the game (40 letters at once), then OK 1.2 s later:
+  // the letters still queued are dropped, none reaches the menus.
+  await page.keyboard.insertText('a'.repeat(40));
+  await sleep(1200);
+  await page.evaluate(() => { window.__log = []; });
   await tap('#t-ok');
   check(await waitMode(0, 10000), 'OK ends the name entry');
-  await sleep(1000);
+  await sleep(4000);
+  // (Keys after OK's Return: none at all.)
+  const leaked = await page.evaluate(() => {
+    const i = window.__log.indexOf('keydown Enter');
+    return i < 0 ? ['no Return'] : window.__log.slice(i + 1).filter(l => l.startsWith('keydown'));
+  });
+  check(leaked.length === 0, 'letters still queued at OK never reach the game afterwards', leaked.slice(0, 5).join(' ') || 'none');
   const names = readNames(await page.evaluate(() => Array.from(Module.FS.readFile('/data/bb.scr'))));
   const entry = names.find(([, n]) => n !== 'NOBODY');
-  check(entry && entry[1] === 'TOUCH 1', 'the name typed by touch is saved in the hi-score table',
+  check(entry && /^TOUCH 1A{0,8}$/.test(entry[1]), 'the name typed by touch is saved in the hi-score table (TOUCH 1, then the few letters typed ahead before OK)',
         entry ? `"${entry[1]}" with ${entry[0]} points` : 'no new entry');
   check(errors.length === 0 && interventions.length === 0, 'name entry: no page errors', errors.concat(interventions).slice(0, 3).join(' | '));
   await Promise.race([ctx.close(), sleep(5000)]);

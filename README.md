@@ -70,7 +70,9 @@ what the game shows (the game reports it through `bb_ui_mode()`,
 - typing a name for the hi-score table: a Keyboard button (or a tap on the
   picture) focuses a hidden text field, which brings up the soft keyboard;
   letters, digits, spaces and deletions typed there go to the game as key
-  presses, and OK (Return) ends the name.
+  presses, and OK (Return) ends the name, dropping letters typed ahead
+  that have not reached the game yet. While the soft keyboard is up, the
+  picture moves up so the name and OK stay in view (`visualViewport`).
 
 Held sideways the controls sit over the picture's lower corners and in the
 margins beside it; held upright, below the picture. They never cover the HUD
@@ -80,7 +82,13 @@ or the default keys (buttons) as a fallback; the menu arrows send the arrow
 keys. A bound key no browser key event can produce (such as the default
 Jump key, SDLK_MENU) is handed to the game as an SDL key event
 (`bb_web_key()` in `game/web_api.cpp`). On touch devices the page never
-scrolls, zooms or bounces (`touch-action: none`, `overscroll-behavior: none`). A touch on the spot between Fire and Jump presses both. Every key they
+scrolls, zooms or bounces (`touch-action: none`, `overscroll-behavior: none`),
+and a touch on the controls is cancelled in its `touchstart` (otherwise
+the browser holds back timers after a touch, and the game, whose main loop
+runs on them, would freeze for about 120 ms). Every press is held for at
+least 50 ms, so a quick tap is never missed. The controls have a dark fill
+and outline, to stay visible over bright scenery. A touch on the spot
+between Fire and Jump presses both. Every key they
 hold is let go when a finger lifts or slides off, a touch is cancelled, the
 window loses focus, the page is hidden or the set of controls changes.
 Presses vibrate briefly where the browser supports it.
