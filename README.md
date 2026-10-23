@@ -28,6 +28,12 @@ are MP3 files, and the browser mixer only decodes OGG, so the build re-encodes t
 Every push to `main` builds the game and deploys it to GitHub Pages
 (`.github/workflows/pages.yml`).
 
+Google Analytics and Search Console tags are added at build time, only when
+the repository variables `GA_MEASUREMENT_ID` (a `G-...` ID) and
+`GOOGLE_SITE_VERIFICATION` (the token from Search Console's HTML tag method)
+are set under Settings > Secrets and variables > Actions > Variables.
+`web/sitemap.xml` is published for Search Console.
+
 ## The page
 
 `web/index.html` scales the 640x480 canvas by the largest whole factor that
