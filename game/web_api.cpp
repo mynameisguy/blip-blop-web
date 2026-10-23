@@ -65,6 +65,16 @@ int bb_web_ui_mode = BB_UI_MENU;
 
 extern "C" EMSCRIPTEN_KEEPALIVE int bb_ui_mode() { return bb_web_ui_mode; }
 
+// Hi-score name entry, for the page's typing: bb_ui_text_seq() counts the
+// entries (one per player, possibly back to back, faster than the page
+// polls the mode), and bb_ui_text_ready() is 1 while the current entry
+// reads keys (after its prompt has slid in, until Return).
+int bb_web_text_seq = 0;
+int bb_web_text_ready = 0;
+
+extern "C" EMSCRIPTEN_KEEPALIVE int bb_ui_text_seq() { return bb_web_text_seq; }
+extern "C" EMSCRIPTEN_KEEPALIVE int bb_ui_text_ready() { return bb_web_text_ready; }
+
 // Presses (down = 1) or releases a key given by its SDL keycode, as the
 // game's key bindings store it, by queueing the SDL key event a keyboard
 // would. The page's touch controls use it for bound keys that no browser

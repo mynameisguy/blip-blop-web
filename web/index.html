@@ -1014,9 +1014,9 @@
       p.kind = 'none';
       openKeyboard();
       haptic();
-    } else if (t.id === 't-ok' && uiMode === UI_TEXT) {
+    } else if (t.id === 't-ok' && (inName() || okAfterName())) {
       p.kind = 'none';
-      finishName();
+      if (inName()) finishName();
       haptic();
     } else if (t.id === 't-auto') {
       p.kind = 'none';
@@ -1085,9 +1085,13 @@
     var m = UI_MENU;
     try { if (running && !failed && Module._bb_ui_mode) m = Module._bb_ui_mode(); } catch (err) {}
     if (m !== uiMode) {
+      if (uiMode === UI_TEXT) nameLeftAt = Date.now();
       uiMode = m;
+      // (Keys typed for a name that has just started stay queued.)
+      var keep = m === UI_TEXT ? typed : [];
       releaseAll();
-      nameDone = false;
+      typed = keep;
+      if (typed.length && !typing) typeNext();
       touchUi.dataset.mode = m === UI_LEVEL ? 'level' : m === UI_MENU ? 'menu' : m === UI_TEXT ? 'text' : 'scene';
       if (m === UI_TEXT) openKeyboard();
       else if (document.activeElement === textInput) { textInput.blur(); canvas.focus({ preventScroll: true }); }
@@ -1114,9 +1118,24 @@
   // and keyup come almost together, or a hardware keyboard) go through the
   // same queue while a name is typed; keyboards that only report text
   // (Android, keyCode 229) are read from the field's input events.
+  // The game says when a name entry starts (bb_ui_text_seq() counts them:
+  // with two players they come back to back, faster than the page polls
+  // the mode) and when it reads keys (bb_ui_text_ready(): its prompt has
+  // slid in). Keys typed before that wait in the queue.
   var textInput = document.getElementById('t-text');
-  var TEXT_FILL = '  ', typed = [], typing = 0, nameDone = false;
+  var TEXT_FILL = '  ', typed = [], typing = 0, nameDone = false, nameSeq = -1;
   var TYPE_DOWN = 60, TYPE_UP = 60;
+  function gameCall(f) { try { return running && !failed && Module[f] ? Module[f]() : 0; } catch (err) { return 0; } }
+  function inName() { return gameCall('_bb_ui_mode') === UI_TEXT; }
+  // A new name entry: start afresh (the last one's OK no longer counts).
+  function syncName() {
+    var seq = gameCall('_bb_ui_text_seq');
+    if (seq !== nameSeq) {
+      nameSeq = seq;
+      nameDone = false;
+      typed = [];
+    }
+  }
   function openKeyboard() {
     if (touchUi.hidden) return;
     textInput.value = TEXT_FILL;
@@ -1127,23 +1146,31 @@
   }
   function typeNext() {
     typing = 0;
-    if (uiMode !== UI_TEXT) typed = [];
-    var k = typed.shift();
-    if (!k) return;
-    tapKeys([k], TYPE_DOWN);
+    if (!inName()) { typed = []; return; }
+    syncName();
+    if (!typed.length) return;
+    if (!gameCall('_bb_ui_text_ready')) { typing = setTimeout(typeNext, 50); return; }
+    tapKeys([typed.shift()], TYPE_DOWN);
     typing = setTimeout(typeNext, TYPE_DOWN + TYPE_UP);
   }
   function type(k) {
-    if (!k || nameDone || uiMode !== UI_TEXT) return;
+    if (!k || !inName()) return;
+    syncName();
+    if (nameDone) return;
     typed.push(k);
     if (!typing) typeNext();
   }
   // OK: Return, after everything typed so far. Anything typed after it is
-  // ignored until the game leaves the name entry, so none of it reaches
-  // the menus that follow.
+  // ignored until the next name entry, so none of it reaches the menus
+  // that follow.
   function finishName() {
     type(domKey(13));
     nameDone = true;
+  }
+  // Repeated taps on OK after the name's: not for the screen that follows.
+  var nameLeftAt = 0;
+  function okAfterName() {
+    return nameDone && (uiMode === UI_TEXT || Date.now() < nameLeftAt + 600);
   }
   function typeChars(text) {
     Array.prototype.forEach.call(text.toLowerCase(), function (c) {
@@ -1151,26 +1178,38 @@
     });
   }
   var sendingKey = false;  // set while the page itself sends a key to the game
-  function textKeys() { return uiMode === UI_TEXT && touchMode && !touchUi.hidden && !sendingKey; }
-  window.addEventListener('keydown', function (e) {
-    if (!textKeys() || e.keyCode === 229 || e.key === 'Unidentified' || e.key === 'Process') return;
+  // Keys taken for the name (by code), so that only their keyups are kept
+  // from the game: a key already down when the entry started reached the
+  // game, and its keyup must too (the game waits for every key to be up).
+  var nameKeys = {};
+  function textKeys() { return touchMode && !touchUi.hidden && !sendingKey && inName(); }
+  function nameKey(e) {
     var k = e.key;
-    if (k !== 'Enter' && k !== 'Backspace' && (k.length !== 1 || e.ctrlKey || e.metaKey || e.altKey)) return;
+    return k === 'Enter' || k === 'Backspace' || (k.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey);
+  }
+  window.addEventListener('keydown', function (e) {
+    if (sendingKey) return;
+    if (e.repeat) {
+      // Held: the game takes one key per press.
+      if (nameKeys[e.code]) { e.preventDefault(); e.stopPropagation(); }
+      return;
+    }
+    if (!textKeys() || e.keyCode === 229 || e.key === 'Unidentified' || e.key === 'Process' || !nameKey(e)) return;
     e.preventDefault();
     e.stopPropagation();
-    if (k === 'Enter') { if (!e.repeat) finishName(); }
-    else if (k === 'Backspace') type(domKey(8));
-    else typeChars(k);
+    nameKeys[e.code] = true;
+    if (e.key === 'Enter') finishName();
+    else if (e.key === 'Backspace') type(domKey(8));
+    else typeChars(e.key);
   }, true);
   window.addEventListener('keyup', function (e) {
-    if (!textKeys() || e.keyCode === 229) return;
-    var k = e.key;
-    if (k !== 'Enter' && k !== 'Backspace' && (k.length !== 1 || e.ctrlKey || e.metaKey || e.altKey)) return;
+    if (sendingKey || !nameKeys[e.code]) return;
+    delete nameKeys[e.code];
     e.preventDefault();
     e.stopPropagation();
   }, true);
   textInput.addEventListener('input', function (e) {
-    if (uiMode === UI_TEXT) {
+    if (inName()) {
       if (e.inputType === 'deleteContentBackward' || textInput.value.length < TEXT_FILL.length) type(domKey(8));
       else if (e.inputType === 'insertLineBreak') finishName();
       else typeChars(e.data != null ? e.data : textInput.value.slice(TEXT_FILL.length));

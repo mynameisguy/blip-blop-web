@@ -2493,6 +2493,7 @@ void Game::getHiscore() {
 
 void Game::getName(Joueur* joueur, int ijoueur) {
     BB_WEB_UI_MODE(BB_UI_TEXT);
+    BB_WEB_TEXT_ENTRY();
     char buff[30];
     char name[21];
     int i = 0;
@@ -2519,6 +2520,7 @@ void Game::getName(Joueur* joueur, int ijoueur) {
         DDFlipV();
     }
 
+    BB_WEB_TEXT_READY(1);
     while (!app_killed && key != DIK_RETURN) {
         manageMsg();
         checkRestore();
@@ -2547,6 +2549,7 @@ void Game::getName(Joueur* joueur, int ijoueur) {
         DDFlipV();
     }
 
+    BB_WEB_TEXT_READY(0);
     while (!app_killed && x < 640) {
         x += 20;
 

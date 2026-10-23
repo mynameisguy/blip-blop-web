@@ -74,7 +74,11 @@ what the game shows (the game reports it through `bb_ui_mode()`,
   presses through a queue (each held 60 ms, then up 60 ms, as the game
   reads one key at a time). Keyboards that send real key codes (iOS) go
   through the same queue. OK (Return) ends the name after everything typed
-  before it; anything typed after OK is ignored. While the soft keyboard is up, the
+  before it; anything typed after OK is ignored. The game reports each name
+  entry and when it reads keys (`bb_ui_text_seq()`, `bb_ui_text_ready()`),
+  so two players' names back to back both work and letters typed while
+  the prompt slides in wait for it. Only keyups of keys the page took for
+  the name are kept from the game. While the soft keyboard is up, the
   picture moves up so the name and OK stay in view (`visualViewport`).
 
 Held sideways the controls sit over the picture's lower corners and in the

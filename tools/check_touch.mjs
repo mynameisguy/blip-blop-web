@@ -26,11 +26,13 @@
 //   - a hi-score name can be typed with the soft keyboard (a hidden text
 //     field) at a normal speed, from keyboards that report only text and
 //     ones that send key codes, with a mistake deleted and OK tapped right
-//     after the last key, and is saved whole; nothing typed after OK
-//     reaches the game.
+//     after the last key, and is saved whole (the first letters typed while
+//     the prompt still slides in); nothing typed after OK reaches the game;
+//   - with two players, both names are typed by touch, back to back, and
+//     saved, and a hardware key held into the first name entry lets go.
 // Screenshots of a menu and a level, lying down and upright, go to outdir.
 //
-//   node tools/check_touch.mjs <url> [outdir] [--device WxH@R] [--only main|defaults|name]
+//   node tools/check_touch.mjs <url> [outdir] [--device WxH@R] [--only main|defaults|name|twop]
 // (default device 844x390@3; the upright shots use the same phone turned.)
 // Needs Playwright (npm i playwright); CHROMIUM_PATH picks the browser.
 import * as D from './game_driver.mjs';
@@ -671,10 +673,19 @@ if (!only || only === 'name') try {
   await fup(1);
   check(dead, 'one life, walking into the enemies: Blip dies and the level ends');
   const pic = await box('#view:not([hidden]), #canvas');
-  for (let i = 0; i < 12 && await uiMode() !== 4; i++) { await tapAt(pic.cx, pic.cy); await sleep(1000); }
+  for (let i = 0; i < 12 && await uiMode() !== 4; i++) { await tapAt(pic.cx, pic.cy); await waitMode(4, 1000); }
+  // The first letters are typed straight away (the page focuses the text
+  // field when the entry starts), while the name prompt still slides in,
+  // before the game reads keys: they wait for it.
+  const earlyReady = await page.evaluate(() => Module._bb_ui_text_ready());
+  for (const c of 'To') { await page.keyboard.insertText(c); await sleep(80); }
+  await tap('#t-kbd');
+  await sleep(200);
   check(await uiMode() === 4 && await touchMode() === 'text' && await visible('#t-kbd') && await visible('#t-ok'),
         'game over, then the hi-score name entry shows the keyboard button and OK', `mode ${await uiMode()}`);
-  await sleep(1500);  // the name prompt slides in
+  check(await page.evaluate(() => document.activeElement && document.activeElement.id === 't-text'),
+        'the keyboard button focuses the text field (which brings up the soft keyboard)');
+  await sleep(1000);
   // The soft keyboard covering the lower 55% of the screen: the picture
   // moves up so the name's row (260 of 480) shows, and OK sits above it.
   const kbH = Math.round(H * 0.55);
@@ -689,8 +700,6 @@ if (!only || only === 'name') try {
   await page.evaluate(() => { window.__kb = 0; visualViewport.dispatchEvent(new Event('resize')); });
   await sleep(300);
   await tap('#t-kbd');
-  check(await page.evaluate(() => document.activeElement && document.activeElement.id === 't-text'),
-        'the keyboard button focuses the text field (which brings up the soft keyboard)');
   // Typed at a normal speed (about 6 keys a second), mixing the two kinds
   // of soft keyboard: one that only reports text (Android: input events,
   // no key codes) and one that sends real key codes with keydown and keyup
@@ -699,7 +708,7 @@ if (!only || only === 'name') try {
   // whole name still goes in, then Return. Letters typed after OK are
   // ignored and nothing reaches the menus that follow.
   const t0 = Date.now();
-  for (const c of 'Tou') { await page.keyboard.insertText(c); await sleep(150); }
+  for (const c of 'u') { await page.keyboard.insertText(c); await sleep(150); }
   for (const c of 'CH') { await page.keyboard.press('Key' + c); await sleep(150); }
   for (const c of ' 1x') { await page.keyboard.insertText(c); await sleep(150); }
   await page.keyboard.press('Backspace');
@@ -719,11 +728,75 @@ if (!only || only === 'name') try {
   const names = readNames(await page.evaluate(() => Array.from(Module.FS.readFile('/data/bb.scr'))));
   const entry = names.find(([, n]) => n !== 'NOBODY');
   check(entry && entry[1] === 'TOUCH 1',
-        'the whole name typed at normal speed (text-only and key-code keyboards, Backspace), OK right after: saved',
-        (entry ? `"${entry[1]}" with ${entry[0]} points` : 'no new entry') + `; typed in ${typedMs} ms`);
+        'the whole name typed at normal speed (text-only and key-code keyboards, Backspace; the first letters while the prompt slid in), OK right after: saved',
+        (entry ? `"${entry[1]}" with ${entry[0]} points` : 'no new entry') + `; typed in ${typedMs} ms; game reading keys when "To" was typed: ${earlyReady ? 'already' : 'not yet'}`);
   check(errors.length === 0 && interventions.length === 0, 'name entry: no page errors', errors.concat(interventions).slice(0, 3).join(' | '));
   await Promise.race([ctx.close(), sleep(5000)]);
 } catch (e) {
   check(false, 'name entry: ' + (e instanceof StepError ? e.message : e.stack));
+}
+// ---- Two players: both names, back to back ----
+// Player 2 (keyboard: 'f' walks right, Tab jumps) and player 1 (the stick)
+// walk into the enemies with one life each; both get a hi-score. The game
+// asks for the two names one right after the other, faster than the page
+// polls what it shows. Player 2's 'f' is still held down when the first
+// name entry starts and let go during it: the game waits for every key to
+// be up, so that release must reach it.
+if (!only || only === 'twop') try {
+  const table = scoreTable(Array.from({ length: 10 }, () => [-1, 'NOBODY']));
+  const ctx = await scenarioPage({ BB_START_LEVEL: 2, BB_LIVES: 1 }, [[/\/data\/bb\.scr/, table]]);
+  await tapUntil(() => tap('#t-skip'), 'the main menu', s => s.title);
+  await sleep(500);
+  const h0 = (await state(page)).hash;
+  await tapUntil(() => tap('#t-ok'), 'the START GAME menu', s => s.title && s.hash !== h0);
+  const h1 = (await state(page)).hash;
+  await tapUntil(() => tap('#t-down'), '2 PLAYERS', s => s.title && s.hash !== h1);
+  await tapUntil(() => tap('#t-ok'), 'character select', s => s.charsel);
+  for (let i = 0; i < 20 && await uiMode() !== 3; i++) { await sleep(800); await tap('#t-ok'); }
+  if (!await waitMode(3, 60000)) throw new StepError(`no briefing; mode ${await uiMode()}`);
+  for (let i = 0; i < 10 && await uiMode() !== 1; i++) { await tap('#t-skip'); await waitMode(1, 1500); }
+  if (await uiMode() !== 1) throw new StepError(`no level; mode ${await uiMode()}`);
+  await sleep(2500);
+  const zone = await box('#stick-zone');
+  const R = await page.evaluate(() => document.getElementById('stick').getBoundingClientRect().width / 2);
+  await fdown(1, zone.x + zone.w / 2, zone.y + zone.h * 0.6);
+  await fmove(1, zone.x + zone.w / 2 + R * 0.8, zone.y + zone.h * 0.6);
+  await page.keyboard.down('f');
+  const end = Date.now() + 200000;
+  for (let i = 1; Date.now() < end && await uiMode() === 1; i++) {
+    await sleep(1000);
+    if (i % 3 === 0) {
+      const jb = await box('#t-jump');
+      await fdown(2, jb.cx, jb.cy); await sleep(300); await fup(2);
+      await page.keyboard.down('Tab'); await sleep(300); await page.keyboard.up('Tab');
+    }
+  }
+  await fup(1);
+  const pc = await box('#view:not([hidden]), #canvas');
+  for (let i = 0; i < 15 && await uiMode() !== 4; i++) { await tapAt(pc.cx, pc.cy); await waitMode(4, 1000); }
+  const seq1 = await page.evaluate(() => Module._bb_ui_text_seq());
+  check(await uiMode() === 4, '2 players: both die, the first name entry starts with player 2\'s key still held', `mode ${await uiMode()}`);
+  await sleep(1000);
+  await page.keyboard.up('f');  // let go during the entry
+  await tap('#t-kbd');
+  for (const c of 'One') { await page.keyboard.insertText(c); await sleep(150); }
+  await tap('#t-ok');
+  // The second entry: as soon as the game starts it.
+  const t0 = Date.now();
+  while (Date.now() - t0 < 10000 && await page.evaluate(() => Module._bb_ui_text_seq()) === seq1) await sleep(20);
+  const second = await page.evaluate(() => Module._bb_ui_text_seq()) === seq1 + 1;
+  await tap('#t-kbd');
+  for (const c of 'Two') { await page.keyboard.insertText(c); await sleep(150); }
+  await tap('#t-ok');
+  const left = await waitMode(0, 10000);
+  await sleep(2000);
+  const saved = readNames(await page.evaluate(() => Array.from(Module.FS.readFile('/data/bb.scr')))).filter(([, n]) => n !== 'NOBODY').map(([, n]) => n).sort();
+  check(second && left && saved.join() === 'ONE,TWO',
+        '2 players: a key held into the first name entry lets go; both names typed by touch, back to back, are saved',
+        `second entry ${second ? 'started' : 'never started'}, ${left ? 'left' : 'still in'} name entry, saved ${JSON.stringify(saved)}`);
+  check(errors.length === 0 && interventions.length === 0, '2 players: no page errors', errors.concat(interventions).slice(0, 3).join(' | '));
+  await Promise.race([ctx.close(), sleep(5000)]);
+} catch (e) {
+  check(false, '2 players: ' + (e instanceof StepError ? e.message : e.stack));
 }
 await D.finish();
