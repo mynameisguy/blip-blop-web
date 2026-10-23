@@ -29,7 +29,9 @@
 //     after the last key, and is saved whole (the first letters typed while
 //     the prompt still slides in); nothing typed after OK reaches the game;
 //   - with two players, both names are typed by touch, back to back, and
-//     saved, and a hardware key held into the first name entry lets go.
+//     saved, and a hardware key held into the first name entry lets go;
+//   - a window blur or a hidden page while a name (and its Return) is
+//     still going out, before or after OK, loses nothing.
 // Screenshots of a menu and a level, lying down and upright, go to outdir.
 //
 //   node tools/check_touch.mjs <url> [outdir] [--device WxH@R] [--only main|defaults|name|twop]
@@ -620,6 +622,24 @@ if (!only || only === 'defaults') try {
   check(false, 'default keys: ' + (e instanceof StepError ? e.message : e.stack));
 }
 
+// The window losing focus, or the page being hidden, for a moment.
+const blurFor = async ms => {
+  await page.evaluate(() => window.dispatchEvent(new FocusEvent('blur')));
+  await sleep(ms);
+  await page.evaluate(() => window.dispatchEvent(new FocusEvent('focus')));
+};
+const hideFor = async ms => {
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await sleep(ms);
+  await page.evaluate(() => {
+    delete document.hidden;
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+};
+
 // ---- Typing a hi-score name by touch ----
 // Every score in the table is -1, so any score gets in. One life in level
 // 2, walking right into the enemies until Blip dies, then game over, then
@@ -710,6 +730,8 @@ if (!only || only === 'name') try {
   const t0 = Date.now();
   for (const c of 'u') { await page.keyboard.insertText(c); await sleep(150); }
   for (const c of 'CH') { await page.keyboard.press('Key' + c); await sleep(150); }
+  // The window loses focus for a moment mid-name (a notification).
+  await blurFor(300);
   for (const c of ' 1x') { await page.keyboard.insertText(c); await sleep(150); }
   await page.keyboard.press('Backspace');
   const typedMs = Date.now() - t0;
@@ -728,7 +750,7 @@ if (!only || only === 'name') try {
   const names = readNames(await page.evaluate(() => Array.from(Module.FS.readFile('/data/bb.scr'))));
   const entry = names.find(([, n]) => n !== 'NOBODY');
   check(entry && entry[1] === 'TOUCH 1',
-        'the whole name typed at normal speed (text-only and key-code keyboards, Backspace; the first letters while the prompt slid in), OK right after: saved',
+        'the whole name typed at normal speed (text-only and key-code keyboards, Backspace; the first letters while the prompt slid in; a blur midway), OK right after: saved',
         (entry ? `"${entry[1]}" with ${entry[0]} points` : 'no new entry') + `; typed in ${typedMs} ms; game reading keys when "To" was typed: ${earlyReady ? 'already' : 'not yet'}`);
   check(errors.length === 0 && interventions.length === 0, 'name entry: no page errors', errors.concat(interventions).slice(0, 3).join(' | '));
   await Promise.race([ctx.close(), sleep(5000)]);
@@ -752,8 +774,18 @@ if (!only || only === 'twop') try {
   const h1 = (await state(page)).hash;
   await tapUntil(() => tap('#t-down'), '2 PLAYERS', s => s.title && s.hash !== h1);
   await tapUntil(() => tap('#t-ok'), 'character select', s => s.charsel);
-  for (let i = 0; i < 20 && await uiMode() !== 3; i++) { await sleep(800); await tap('#t-ok'); }
-  if (!await waitMode(3, 60000)) throw new StepError(`no briefing; mode ${await uiMode()}`);
+  // Character select: OK while it shows (once the characters have
+  // settled), and no more taps once the briefing loads.
+  for (let i = 0; i < 40 && await uiMode() !== 3; i++) {
+    let last = null;
+    await waitState(page, st => {
+      const ok = !st.charsel || (st.blue && last && Math.abs(st.blue.x - last.x) < 1 && st.frame > last.frame);
+      if (st.blue) last = { x: st.blue.x, frame: st.frame };
+      return ok;
+    }, 5000);
+    if ((await state(page)).charsel) { await tap('#t-ok'); await sleep(1500); } else await sleep(500);
+  }
+  if (!await waitMode(3, 60000)) { await shot('twop-no-briefing'); throw new StepError(`no briefing; mode ${await uiMode()}; the game shows ${describe(await state(page))}`); }
   for (let i = 0; i < 10 && await uiMode() !== 1; i++) { await tap('#t-skip'); await waitMode(1, 1500); }
   if (await uiMode() !== 1) throw new StepError(`no level; mode ${await uiMode()}`);
   await sleep(2500);
@@ -781,6 +813,9 @@ if (!only || only === 'twop') try {
   await tap('#t-kbd');
   for (const c of 'One') { await page.keyboard.insertText(c); await sleep(150); }
   await tap('#t-ok');
+  // The window loses focus while the name and its Return are still going out.
+  await sleep(150);
+  await blurFor(300);
   // The second entry: as soon as the game starts it.
   const t0 = Date.now();
   while (Date.now() - t0 < 10000 && await page.evaluate(() => Module._bb_ui_text_seq()) === seq1) await sleep(20);
@@ -788,11 +823,14 @@ if (!only || only === 'twop') try {
   await tap('#t-kbd');
   for (const c of 'Two') { await page.keyboard.insertText(c); await sleep(150); }
   await tap('#t-ok');
+  // The page is hidden for a moment while the name still goes out.
+  await sleep(150);
+  await hideFor(500);
   const left = await waitMode(0, 10000);
   await sleep(2000);
   const saved = readNames(await page.evaluate(() => Array.from(Module.FS.readFile('/data/bb.scr')))).filter(([, n]) => n !== 'NOBODY').map(([, n]) => n).sort();
   check(second && left && saved.join() === 'ONE,TWO',
-        '2 players: a key held into the first name entry lets go; both names typed by touch, back to back, are saved',
+        '2 players: a key held into the first name entry lets go; both names typed by touch, back to back, are saved (a blur after the first OK, a hidden page after the second)',
         `second entry ${second ? 'started' : 'never started'}, ${left ? 'left' : 'still in'} name entry, saved ${JSON.stringify(saved)}`);
   check(errors.length === 0 && interventions.length === 0, '2 players: no page errors', errors.concat(interventions).slice(0, 3).join(' | '));
   await Promise.race([ctx.close(), sleep(5000)]);

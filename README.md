@@ -77,7 +77,9 @@ what the game shows (the game reports it through `bb_ui_mode()`,
   before it; anything typed after OK is ignored. The game reports each name
   entry and when it reads keys (`bb_ui_text_seq()`, `bb_ui_text_ready()`),
   so two players' names back to back both work and letters typed while
-  the prompt slides in wait for it. Only keyups of keys the page took for
+  the prompt slides in wait for it. A window blur or a hidden page while
+  a name is still going out pauses the queue instead of dropping it, and
+  OK sends Return again if the game still asks for the name. Only keyups of keys the page took for
   the name are kept from the game. While the soft keyboard is up, the
   picture moves up so the name and OK stay in view (`visualViewport`).
 

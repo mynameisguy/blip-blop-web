@@ -994,12 +994,23 @@
     activeStick = null;
     taps = [];
     autoKeys = null;
-    typed = [];
-    clearTimeout(typing);
-    typing = 0;
+    // While a name is typed, what is queued for it stays queued (typing
+    // waits while the page is hidden or not focused, then goes on), and
+    // the letter being typed is let go on time by the queue.
+    var inEntry = inName();
+    if (!inEntry) {
+      typed = [];
+      clearTimeout(typing);
+      typing = 0;
+      typingKey = null;
+    }
     // Nothing should still be held, but make sure the game sees every key up
     // (now, without waiting for the minimum hold).
-    Object.keys(held).forEach(function (code) { clearTimeout(upTimer[code]); keyUp(code); });
+    Object.keys(held).forEach(function (code) {
+      if (inEntry && typingKey && typingKey.code === code) return;
+      clearTimeout(upTimer[code]);
+      keyUp(code);
+    });
     refreshLit();
   }
 
@@ -1087,10 +1098,7 @@
     if (m !== uiMode) {
       if (uiMode === UI_TEXT) nameLeftAt = Date.now();
       uiMode = m;
-      // (Keys typed for a name that has just started stay queued.)
-      var keep = m === UI_TEXT ? typed : [];
-      releaseAll();
-      typed = keep;
+      releaseAll();  // (keys typed for a name that has just started stay queued)
       if (typed.length && !typing) typeNext();
       touchUi.dataset.mode = m === UI_LEVEL ? 'level' : m === UI_MENU ? 'menu' : m === UI_TEXT ? 'text' : 'scene';
       if (m === UI_TEXT) openKeyboard();
@@ -1123,7 +1131,7 @@
   // the mode) and when it reads keys (bb_ui_text_ready(): its prompt has
   // slid in). Keys typed before that wait in the queue.
   var textInput = document.getElementById('t-text');
-  var TEXT_FILL = '  ', typed = [], typing = 0, nameDone = false, nameSeq = -1;
+  var TEXT_FILL = '  ', typed = [], typing = 0, typingKey = null, nameDone = false, nameSeq = -1;
   var TYPE_DOWN = 60, TYPE_UP = 60;
   function gameCall(f) { try { return running && !failed && Module[f] ? Module[f]() : 0; } catch (err) { return 0; } }
   function inName() { return gameCall('_bb_ui_mode') === UI_TEXT; }
@@ -1149,8 +1157,18 @@
     if (!inName()) { typed = []; return; }
     syncName();
     if (!typed.length) return;
-    if (!gameCall('_bb_ui_text_ready')) { typing = setTimeout(typeNext, 50); return; }
-    tapKeys([typed.shift()], TYPE_DOWN);
+    // Wait for the game to read keys, and for the page to be back in front.
+    if (!gameCall('_bb_ui_text_ready') || !focused || document.hidden) {
+      typing = setTimeout(typeNext, 50);
+      return;
+    }
+    var k = typingKey = typed.shift();
+    press(k);
+    setTimeout(function () {
+      if (typingKey !== k) return;  // already let go by releaseAll()
+      typingKey = null;
+      release(k);
+    }, TYPE_DOWN);
     typing = setTimeout(typeNext, TYPE_DOWN + TYPE_UP);
   }
   function type(k) {
@@ -1164,6 +1182,13 @@
   // ignored until the next name entry, so none of it reaches the menus
   // that follow.
   function finishName() {
+    if (!inName()) return;
+    syncName();
+    // Everything typed has gone out, Return too, and the game still asks
+    // for the name (its Return was lost): OK sends Return again. (Once the
+    // game has taken Return it no longer reads keys, and a Return queued
+    // then waits and is dropped when the entry ends.)
+    if (nameDone && !typed.length && !typing && !typingKey) nameDone = false;
     type(domKey(13));
     nameDone = true;
   }
