@@ -32,10 +32,12 @@
 //     saved, and a hardware key held into the first name entry lets go;
 //   - a window blur or a hidden page while a name (and its Return) is
 //     still going out, before or after OK, even right as a letter is
-//     pressed, loses nothing; composed text (IME) is typed once.
+//     pressed, loses nothing; composed text (IME) is typed once, and a
+//     letter still being composed at OK counts;
+//   - on a desktop (no touch), a name typed on a physical keyboard is saved.
 // Screenshots of a menu and a level, lying down and upright, go to outdir.
 //
-//   node tools/check_touch.mjs <url> [outdir] [--device WxH@R] [--only main|defaults|name|twop]
+//   node tools/check_touch.mjs <url> [outdir] [--device WxH@R] [--only main|defaults|name|twop|desktop]
 // (default device 844x390@3; the upright shots use the same phone turned.)
 // Needs Playwright (npm i playwright); CHROMIUM_PATH picks the browser.
 import * as D from './game_driver.mjs';
@@ -742,14 +744,18 @@ if (!only || only === 'name') try {
   await blurFor(300);
   await page.keyboard.insertText(' ');
   await sleep(150);
-  // A "word" composed letter by letter, then committed.
-  for (const w of ['1', '1x']) {
+  // A "word" composed letter by letter, then committed, and taken back.
+  for (const w of ['x', 'xy']) {
     await cdp.send('Input.imeSetComposition', { text: w, selectionStart: w.length, selectionEnd: w.length });
     await sleep(150);
   }
-  await cdp.send('Input.insertText', { text: '1x' });
+  await cdp.send('Input.insertText', { text: 'xy' });
   await sleep(150);
-  await page.keyboard.press('Backspace');
+  for (let i = 0; i < 2; i++) { await page.keyboard.press('Backspace'); await sleep(150); }
+  // The last letter is still being composed (not committed) when OK is
+  // tapped: it counts.
+  await cdp.send('Input.imeSetComposition', { text: '1', selectionStart: 1, selectionEnd: 1 });
+  await sleep(100);
   const typedMs = Date.now() - t0;
   await shot('name-entry');
   await page.evaluate(() => { window.__log = []; });
@@ -766,7 +772,7 @@ if (!only || only === 'name') try {
   const names = readNames(await page.evaluate(() => Array.from(Module.FS.readFile('/data/bb.scr'))));
   const entry = names.find(([, n]) => n !== 'NOBODY');
   check(entry && entry[1] === 'TOUCH 1',
-        'the whole name typed at normal speed (text-only, composing and key-code keyboards, Backspace; the first letters while the prompt slid in; a blur midway), OK right after: saved',
+        'the whole name typed at normal speed (text-only, composing and key-code keyboards, Backspace; the first letters while the prompt slid in; a blur midway; the last letter still being composed at OK), OK right after: saved',
         (entry ? `"${entry[1]}" with ${entry[0]} points` : 'no new entry') + `; typed in ${typedMs} ms; game reading keys when "To" was typed: ${earlyReady ? 'already' : 'not yet'}`);
   check(errors.length === 0 && interventions.length === 0, 'name entry: no page errors', errors.concat(interventions).slice(0, 3).join(' | '));
   await Promise.race([ctx.close(), sleep(5000)]);
@@ -863,5 +869,59 @@ if (!only || only === 'twop') try {
   await Promise.race([ctx.close(), sleep(5000)]);
 } catch (e) {
   check(false, '2 players: ' + (e instanceof StepError ? e.message : e.stack));
+}
+// ---- Desktop: a hi-score name typed on a physical keyboard ----
+// No touch at all: the touch controls stay hidden and the page leaves the
+// keys alone; the game reads them itself, as before.
+if (!only || only === 'desktop') try {
+  const table = scoreTable(Array.from({ length: 10 }, () => [-1, 'NOBODY']));
+  const ctx = await D.newContext({ viewport: { width: 1280, height: 800 } });
+  await ctx.route(/\/data\/bb\.scr/, r => r.fulfill({ status: 200, body: table }));
+  const setEnv = `window.bbHooks.bbEnv = Object.assign(window.bbHooks.bbEnv, ${JSON.stringify({ BB_START_LEVEL: 2, BB_LIVES: 1 })});`;
+  const r = await D.newGamePage({ context: ctx, initScripts: [setEnv] });
+  page = r.page;
+  errors = r.errors;
+  const key = async (k, hold = 100) => { await page.keyboard.down(k); await sleep(hold); await page.keyboard.up(k); await sleep(150); };
+  const touchHidden = await page.evaluate(() => document.getElementById('touch').hidden && !document.body.classList.contains('touch'));
+  await tapUntil(() => key('Escape'), 'the main menu', st => st.title);
+  await sleep(500);
+  const h0 = (await state(page)).hash;
+  await tapUntil(() => key('Enter'), 'the START GAME menu', st => st.title && st.hash !== h0);
+  await tapUntil(() => key('Enter'), 'character select', st => st.charsel);
+  let last = null;
+  await waitState(page, st => {
+    const ok = st.charsel && st.blue && last && Math.abs(st.blue.x - last.x) < 1 && st.frame > last.frame;
+    if (st.blue) last = { x: st.blue.x, frame: st.frame };
+    return ok;
+  }, 5000);
+  await tapUntil(() => key('Enter'), 'the briefing', st => !st.charsel);
+  if (!await waitMode(3, 60000)) throw new StepError(`no briefing; mode ${await uiMode()}`);
+  for (let i = 0; i < 10 && await uiMode() !== 1; i++) { await key('Enter'); await waitMode(1, 1500); }
+  if (await uiMode() !== 1) throw new StepError(`no level; mode ${await uiMode()}`);
+  await sleep(2500);
+  await page.keyboard.down('ArrowRight');
+  const end = Date.now() + 180000;
+  for (let i = 1; Date.now() < end && await uiMode() === 1; i++) {
+    await sleep(1000);
+    if (i % 3 === 0) await key('Space', 300);
+  }
+  await page.keyboard.up('ArrowRight');
+  for (let i = 0; i < 15 && await uiMode() !== 4; i++) { await key('Enter'); await waitMode(4, 1000); }
+  check(await uiMode() === 4, 'desktop: one life, Blip dies, the name entry starts', `mode ${await uiMode()}`);
+  await sleep(1000);
+  for (const c of 'deskx') await key('Key' + c.toUpperCase());
+  await key('Backspace');
+  await key('Enter');
+  const left = await waitMode(0, 10000);
+  await sleep(1000);
+  const names = readNames(await page.evaluate(() => Array.from(Module.FS.readFile('/data/bb.scr'))));
+  const entry = names.find(([, n]) => n !== 'NOBODY');
+  check(touchHidden && left && entry && entry[1] === 'DESK',
+        'desktop: the name typed on a physical keyboard (with Backspace) and Return are saved, with no touch controls',
+        `touch controls ${touchHidden ? 'hidden' : 'SHOWN'}, ${left ? 'left' : 'still in'} name entry, saved ${entry ? '"' + entry[1] + '"' : 'nothing'}`);
+  check(errors.length === 0, 'desktop name entry: no page errors', errors.slice(0, 3).join(' | '));
+  await Promise.race([ctx.close(), sleep(5000)]);
+} catch (e) {
+  check(false, 'desktop name entry: ' + (e instanceof StepError ? e.message : e.stack));
 }
 await D.finish();

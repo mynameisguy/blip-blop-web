@@ -1148,7 +1148,7 @@
       nameDone = false;
       typed = [];
       pending = null;
-      sentText = fieldText();  // (what is in the field now is not for this name)
+      sentText = fieldText().slice(0, NAME_MAX);  // (what is in the field now is not for this name)
     }
   }
   function openKeyboard() {
@@ -1172,8 +1172,9 @@
           typing = setTimeout(typeNext, 20);  // still down, or the game may still look
           return;
         }
-        // Let go before the game saw it: send it again (a few times at most).
-        if (pending.tries < 8) typed.unshift(pending.key);
+        // Let go before the game saw it: send it again, for as long as the
+        // game asks for this name (it waits for keys meanwhile anyway).
+        typed.unshift(pending.key);
         var tries = pending.tries + 1;
         pending = null;
         return sendNext(tries);
@@ -1211,6 +1212,7 @@
   function finishName() {
     if (!inName()) return;
     syncName();
+    if (!nameDone) readField();  // (a word still being composed counts)
     // Everything typed has gone out, Return too, and the game still asks
     // for the name (its Return was lost): OK sends Return again. (Once the
     // game has taken Return it no longer reads keys, and a Return queued
@@ -1261,11 +1263,14 @@
     e.stopPropagation();
   }, true);
   // Soft keyboards that only report text, many through composition (a word
-  // being typed is shown and changed before it is committed): what the
-  // field holds once committed is compared with what was already sent, and
-  // the difference goes to the game (letters, or Backspace for deletions).
-  // The field starts with two spaces, so a deletion past the name's start
-  // still shows.
+  // being typed is shown and changed until a space commits it): on every
+  // change, composing or not, what the field holds is compared with what
+  // was already sent, and the difference goes to the game (Backspaces for
+  // what was taken back, then the new letters), so letters show as they
+  // are typed and a commit or an autocorrection is just one more change.
+  // OK reads the field once more first. The field starts with two spaces,
+  // so a deletion past the name's start still shows. Only the game's 19
+  // characters count.
   var sentText = '', composing = false;
   function fieldText() {
     return textInput.value.slice(TEXT_FILL.length).toLowerCase().replace(/[^a-z0-9 ]/g, '');
@@ -1275,25 +1280,24 @@
     sentText = '';
     try { textInput.setSelectionRange(TEXT_FILL.length, TEXT_FILL.length); } catch (err) {}
   }
+  var NAME_MAX = 19;
   function readField() {
-    if (composing) return;
-    if (!inName()) { resetField(); return; }
+    if (!inName()) { if (!composing) resetField(); return; }
     if (textInput.value.length < TEXT_FILL.length) {
       type(domKey(8));
       resetField();
       return;
     }
-    var now = fieldText(), p = 0;
+    var now = fieldText().slice(0, NAME_MAX), p = 0;
     while (p < now.length && p < sentText.length && now[p] === sentText[p]) p++;
     for (var i = p; i < sentText.length; i++) type(domKey(8));
     typeChars(now.slice(p));
     sentText = now;
-    if (textInput.value.length > 40) resetField();
+    if (textInput.value.length > 40 && !composing) resetField();
   }
   textInput.addEventListener('compositionstart', function () { composing = true; });
   textInput.addEventListener('compositionend', function () { composing = false; readField(); });
   textInput.addEventListener('input', function (e) {
-    if (e.isComposing || e.inputType === 'insertCompositionText') return;
     if (e.inputType === 'insertLineBreak') { finishName(); return; }
     readField();
   });
