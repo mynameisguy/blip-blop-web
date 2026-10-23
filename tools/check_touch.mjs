@@ -30,6 +30,8 @@
 //     the prompt still slides in); nothing typed after OK reaches the game;
 //   - with two players, both names are typed by touch, back to back, and
 //     saved, and a hardware key held into the first name entry lets go;
+//     a name typed past the game's 19 characters, then Backspace (a key or
+//     from the text field) and a letter, saves the right letters;
 //   - a window blur or a hidden page while a name (and its Return) is
 //     still going out, before or after OK, even right as a letter is
 //     pressed, loses nothing; composed text (IME) is typed once, and a
@@ -854,7 +856,18 @@ if (!only || only === 'twop') try {
   while (Date.now() - t0 < 10000 && await page.evaluate(() => Module._bb_ui_text_seq()) === seq1) await sleep(20);
   const second = await page.evaluate(() => Module._bb_ui_text_seq()) === seq1 + 1;
   await tap('#t-kbd');
-  for (const c of 'Two') { await page.keyboard.insertText(c); await sleep(150); }
+  // Typed past the game's 19 characters (the rest is ignored), then two
+  // Backspaces, one a real key (Samsung, SwiftKey), one from a text-only
+  // keyboard, then one more letter: the field always holds what the game
+  // holds, so the right letters go.
+  for (const c of 'twoabcdefghijklmnopqrs') { await page.keyboard.insertText(c); await sleep(60); }
+  await page.keyboard.press('Backspace');
+  await sleep(100);
+  await page.evaluate(() => document.execCommand('delete'));
+  await sleep(100);
+  await page.keyboard.insertText('z');
+  await sleep(100);
+  const field = await page.$eval('#t-text', e => e.value.trim().toUpperCase());
   await tap('#t-ok');
   // The page is hidden for a moment while the name still goes out.
   await sleep(150);
@@ -862,9 +875,10 @@ if (!only || only === 'twop') try {
   const left = await waitMode(0, 10000);
   await sleep(2000);
   const saved = readNames(await page.evaluate(() => Array.from(Module.FS.readFile('/data/bb.scr')))).filter(([, n]) => n !== 'NOBODY').map(([, n]) => n).sort();
-  check(second && left && saved.join() === 'ONE,TWO',
-        '2 players: a key held into the first name entry lets go; both names typed by touch, back to back, are saved (a blur as a letter goes out and after the first OK, a hidden page after the second)',
-        `second entry ${second ? 'started' : 'never started'}, ${left ? 'left' : 'still in'} name entry, saved ${JSON.stringify(saved)}`);
+  const P2 = 'TWOABCDEFGHIJKLMNZ';
+  check(second && left && saved.join() === ['ONE', P2].join() && field === P2,
+        '2 players: a key held into the first name entry lets go; both names typed by touch, back to back, are saved (a blur as a letter goes out and after the first OK; the second typed past 19 characters, 2 Backspaces, one more letter; a hidden page after its OK)',
+        `second entry ${second ? 'started' : 'never started'}, ${left ? 'left' : 'still in'} name entry, saved ${JSON.stringify(saved)}, field before OK "${field}"`);
   check(errors.length === 0 && interventions.length === 0, '2 players: no page errors', errors.concat(interventions).slice(0, 3).join(' | '));
   await Promise.race([ctx.close(), sleep(5000)]);
 } catch (e) {

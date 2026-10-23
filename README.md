@@ -83,9 +83,11 @@ what the game shows (the game reports it through `bb_ui_mode()`,
   sent again unless the game took it (`bb_ui_text_taken()`): a window blur
   makes SDL let go of every key, possibly before the game saw it. Text
   typed through composition (Gboard, Samsung) goes out as it is typed: on
-  every change the field is compared with what was already sent (only the
-  game's 19 characters count), and OK reads it once more, so a word still
-  being composed counts. Only keyups of keys the page took for
+  every change the field is compared with what was already sent, and OK
+  reads it once more, so a word still being composed counts. The field
+  always holds what the game holds: it is trimmed to the game's 19
+  characters, and keys with key codes (letters on iOS, Backspace on
+  Samsung and SwiftKey) change it too. Only keyups of keys the page took for
   the name are kept from the game. While the soft keyboard is up, the
   picture moves up so the name and OK stay in view (`visualViewport`).
 

@@ -1148,12 +1148,13 @@
       nameDone = false;
       typed = [];
       pending = null;
-      sentText = fieldText().slice(0, NAME_MAX);  // (what is in the field now is not for this name)
+      if (!composing) resetField();  // (what is in the field is not for this name)
+      else sentText = fieldText();
     }
   }
   function openKeyboard() {
     if (touchUi.hidden) return;
-    if (!composing) resetField();
+    if (inName()) syncName();  // (a new name entry starts with an empty field)
     try {
       textInput.focus({ preventScroll: true });
       if (!composing) textInput.setSelectionRange(textInput.value.length, textInput.value.length);
@@ -1253,8 +1254,8 @@
     e.stopPropagation();
     nameKeys[e.code] = true;
     if (e.key === 'Enter') finishName();
-    else if (e.key === 'Backspace') type(domKey(8));
-    else typeChars(e.key);
+    else if (e.key === 'Backspace') fieldBackspace();
+    else fieldType(e.key);
   }, true);
   window.addEventListener('keyup', function (e) {
     if (sendingKey || !nameKeys[e.code]) return;
@@ -1281,6 +1282,19 @@
     try { textInput.setSelectionRange(TEXT_FILL.length, TEXT_FILL.length); } catch (err) {}
   }
   var NAME_MAX = 19;
+  // Keys with key codes (iOS keyboards; Samsung and SwiftKey send
+  // Backspace that way) change the field too, so that it always holds
+  // what the game holds.
+  function fieldType(c) {
+    if (composing) { typeChars(c); return; }
+    textInput.value += c;
+    readField();
+  }
+  function fieldBackspace() {
+    if (composing || textInput.value.length <= TEXT_FILL.length) { type(domKey(8)); return; }
+    textInput.value = textInput.value.slice(0, -1);
+    readField();
+  }
   function readField() {
     if (!inName()) { if (!composing) resetField(); return; }
     if (textInput.value.length < TEXT_FILL.length) {
@@ -1293,7 +1307,13 @@
     for (var i = p; i < sentText.length; i++) type(domKey(8));
     typeChars(now.slice(p));
     sentText = now;
-    if (textInput.value.length > 40 && !composing) resetField();
+    // The field never holds more than the game does: no more than its 19
+    // characters, and none it ignores (trimmed once a composition ends).
+    var raw = textInput.value.slice(TEXT_FILL.length), clean = raw.replace(/[^A-Za-z0-9 ]/g, '').slice(0, NAME_MAX);
+    if (!composing && clean !== raw) {
+      textInput.value = TEXT_FILL + clean;
+      try { textInput.setSelectionRange(textInput.value.length, textInput.value.length); } catch (err) {}
+    }
   }
   textInput.addEventListener('compositionstart', function () { composing = true; });
   textInput.addEventListener('compositionend', function () { composing = false; readField(); });
