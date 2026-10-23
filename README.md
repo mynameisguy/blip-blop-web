@@ -79,7 +79,11 @@ what the game shows (the game reports it through `bb_ui_mode()`,
   so two players' names back to back both work and letters typed while
   the prompt slides in wait for it. A window blur or a hidden page while
   a name is still going out pauses the queue instead of dropping it, and
-  OK sends Return again if the game still asks for the name. Only keyups of keys the page took for
+  OK sends Return again if the game still asks for the name. Each key is
+  sent again unless the game took it (`bb_ui_text_taken()`): a window blur
+  makes SDL let go of every key, possibly before the game saw it. Text
+  typed through composition (Gboard, Samsung) is read once committed, by
+  comparing the field with what was already sent. Only keyups of keys the page took for
   the name are kept from the game. While the soft keyboard is up, the
   picture moves up so the name and OK stay in view (`visualViewport`).
 

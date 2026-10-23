@@ -31,7 +31,8 @@
 //   - with two players, both names are typed by touch, back to back, and
 //     saved, and a hardware key held into the first name entry lets go;
 //   - a window blur or a hidden page while a name (and its Return) is
-//     still going out, before or after OK, loses nothing.
+//     still going out, before or after OK, even right as a letter is
+//     pressed, loses nothing; composed text (IME) is typed once.
 // Screenshots of a menu and a level, lying down and upright, go to outdir.
 //
 //   node tools/check_touch.mjs <url> [outdir] [--device WxH@R] [--only main|defaults|name|twop]
@@ -723,16 +724,31 @@ if (!only || only === 'name') try {
   // Typed at a normal speed (about 6 keys a second), mixing the two kinds
   // of soft keyboard: one that only reports text (Android: input events,
   // no key codes) and one that sends real key codes with keydown and keyup
-  // almost together (iOS). A mistake is deleted with Backspace, and OK is
+  // almost together (iOS), and keyboards that type through composition
+  // (Gboard, Samsung: a letter, or a word shown and changed, then
+  // committed; CDP Input.imeSetComposition / insertText). A mistake is
+  // deleted with Backspace, and OK is
   // tapped right after the last key, before the game has caught up: the
   // whole name still goes in, then Return. Letters typed after OK are
   // ignored and nothing reaches the menus that follow.
   const t0 = Date.now();
-  for (const c of 'u') { await page.keyboard.insertText(c); await sleep(150); }
+  // One letter composed, then committed.
+  await cdp.send('Input.imeSetComposition', { text: 'u', selectionStart: 1, selectionEnd: 1 });
+  await sleep(60);
+  await cdp.send('Input.insertText', { text: 'u' });
+  await sleep(100);
   for (const c of 'CH') { await page.keyboard.press('Key' + c); await sleep(150); }
   // The window loses focus for a moment mid-name (a notification).
   await blurFor(300);
-  for (const c of ' 1x') { await page.keyboard.insertText(c); await sleep(150); }
+  await page.keyboard.insertText(' ');
+  await sleep(150);
+  // A "word" composed letter by letter, then committed.
+  for (const w of ['1', '1x']) {
+    await cdp.send('Input.imeSetComposition', { text: w, selectionStart: w.length, selectionEnd: w.length });
+    await sleep(150);
+  }
+  await cdp.send('Input.insertText', { text: '1x' });
+  await sleep(150);
   await page.keyboard.press('Backspace');
   const typedMs = Date.now() - t0;
   await shot('name-entry');
@@ -750,7 +766,7 @@ if (!only || only === 'name') try {
   const names = readNames(await page.evaluate(() => Array.from(Module.FS.readFile('/data/bb.scr'))));
   const entry = names.find(([, n]) => n !== 'NOBODY');
   check(entry && entry[1] === 'TOUCH 1',
-        'the whole name typed at normal speed (text-only and key-code keyboards, Backspace; the first letters while the prompt slid in; a blur midway), OK right after: saved',
+        'the whole name typed at normal speed (text-only, composing and key-code keyboards, Backspace; the first letters while the prompt slid in; a blur midway), OK right after: saved',
         (entry ? `"${entry[1]}" with ${entry[0]} points` : 'no new entry') + `; typed in ${typedMs} ms; game reading keys when "To" was typed: ${earlyReady ? 'already' : 'not yet'}`);
   check(errors.length === 0 && interventions.length === 0, 'name entry: no page errors', errors.concat(interventions).slice(0, 3).join(' | '));
   await Promise.race([ctx.close(), sleep(5000)]);
@@ -811,6 +827,17 @@ if (!only || only === 'twop') try {
   await sleep(1000);
   await page.keyboard.up('f');  // let go during the entry
   await tap('#t-kbd');
+  // The window loses focus right as the second letter goes to the game
+  // (SDL then lets go of every key, maybe before the game saw it).
+  await page.evaluate(() => {
+    let n = 0;
+    window.addEventListener('keydown', e => {
+      if (!e.isTrusted && /^Key/.test(e.code) && ++n === 2) setTimeout(() => {
+        window.dispatchEvent(new FocusEvent('blur'));
+        setTimeout(() => window.dispatchEvent(new FocusEvent('focus')), 300);
+      }, 1);
+    }, true);
+  });
   for (const c of 'One') { await page.keyboard.insertText(c); await sleep(150); }
   await tap('#t-ok');
   // The window loses focus while the name and its Return are still going out.
@@ -830,7 +857,7 @@ if (!only || only === 'twop') try {
   await sleep(2000);
   const saved = readNames(await page.evaluate(() => Array.from(Module.FS.readFile('/data/bb.scr')))).filter(([, n]) => n !== 'NOBODY').map(([, n]) => n).sort();
   check(second && left && saved.join() === 'ONE,TWO',
-        '2 players: a key held into the first name entry lets go; both names typed by touch, back to back, are saved (a blur after the first OK, a hidden page after the second)',
+        '2 players: a key held into the first name entry lets go; both names typed by touch, back to back, are saved (a blur as a letter goes out and after the first OK, a hidden page after the second)',
         `second entry ${second ? 'started' : 'never started'}, ${left ? 'left' : 'still in'} name entry, saved ${JSON.stringify(saved)}`);
   check(errors.length === 0 && interventions.length === 0, '2 players: no page errors', errors.concat(interventions).slice(0, 3).join(' | '));
   await Promise.race([ctx.close(), sleep(5000)]);

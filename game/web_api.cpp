@@ -71,9 +71,14 @@ extern "C" EMSCRIPTEN_KEEPALIVE int bb_ui_mode() { return bb_web_ui_mode; }
 // reads keys (after its prompt has slid in, until Return).
 int bb_web_text_seq = 0;
 int bb_web_text_ready = 0;
+int bb_web_text_taken = 0;
 
 extern "C" EMSCRIPTEN_KEEPALIVE int bb_ui_text_seq() { return bb_web_text_seq; }
 extern "C" EMSCRIPTEN_KEEPALIVE int bb_ui_text_ready() { return bb_web_text_ready; }
+// Counts the keys name entries have taken, so the page can tell whether a
+// key it pressed reached the game (a window blur makes SDL let go of every
+// key, possibly before the game saw it).
+extern "C" EMSCRIPTEN_KEEPALIVE int bb_ui_text_taken() { return bb_web_text_taken; }
 
 // Presses (down = 1) or releases a key given by its SDL keycode, as the
 // game's key bindings store it, by queueing the SDL key event a keyboard

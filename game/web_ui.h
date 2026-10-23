@@ -7,8 +7,9 @@
 //   BB_WEB_UI_MODE(mode);   // for the rest of the enclosing block
 //
 // sets the mode and restores the previous one when the block ends.
-// BB_WEB_TEXT_ENTRY() and BB_WEB_TEXT_READY(on) mark a hi-score name entry
-// and when it reads keys (bb_ui_text_seq() and bb_ui_text_ready()). On a
+// BB_WEB_TEXT_ENTRY(), BB_WEB_TEXT_READY(on) and BB_WEB_TEXT_TAKEN() mark a
+// hi-score name entry, when it reads keys and each key it takes
+// (bb_ui_text_seq(), bb_ui_text_ready() and bb_ui_text_taken()). On a
 // native build it does nothing.
 
 enum {
@@ -25,6 +26,8 @@ extern int bb_web_text_seq;    // hi-score name entries so far
 extern int bb_web_text_ready;  // 1 while a name entry reads keys
 #define BB_WEB_TEXT_ENTRY() (++bb_web_text_seq, bb_web_text_ready = 0)
 #define BB_WEB_TEXT_READY(on) (bb_web_text_ready = (on))
+extern int bb_web_text_taken;  // keys a name entry has taken so far
+#define BB_WEB_TEXT_TAKEN() (++bb_web_text_taken)
 
 struct BBWebUiMode {
     int prev;
@@ -36,4 +39,5 @@ struct BBWebUiMode {
 #define BB_WEB_UI_MODE(mode) ((void)0)
 #define BB_WEB_TEXT_ENTRY() ((void)0)
 #define BB_WEB_TEXT_READY(on) ((void)0)
+#define BB_WEB_TEXT_TAKEN() ((void)0)
 #endif

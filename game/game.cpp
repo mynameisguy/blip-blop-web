@@ -2527,6 +2527,7 @@ void Game::getName(Joueur* joueur, int ijoueur) {
 
         in.waitClean();
         key = in.waitKey();
+        BB_WEB_TEXT_TAKEN();
 
         std::string key_tmp = DIK_to_string(key);
 

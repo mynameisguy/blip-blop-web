@@ -1003,6 +1003,7 @@
       clearTimeout(typing);
       typing = 0;
       typingKey = null;
+      pending = null;
     }
     // Nothing should still be held, but make sure the game sees every key up
     // (now, without waiting for the minimum hold).
@@ -1129,9 +1130,13 @@
   // The game says when a name entry starts (bb_ui_text_seq() counts them:
   // with two players they come back to back, faster than the page polls
   // the mode) and when it reads keys (bb_ui_text_ready(): its prompt has
-  // slid in). Keys typed before that wait in the queue.
+  // slid in). Keys typed before that wait in the queue. Each key is sent
+  // again unless the game took it (bb_ui_text_taken() counts the keys it
+  // takes): a window blur makes SDL let go of every key, possibly before
+  // the game saw the one being typed.
   var textInput = document.getElementById('t-text');
   var TEXT_FILL = '  ', typed = [], typing = 0, typingKey = null, nameDone = false, nameSeq = -1;
+  var pending = null;  // the key last sent: { key, taken, tries, up }
   var TYPE_DOWN = 60, TYPE_UP = 60;
   function gameCall(f) { try { return running && !failed && Module[f] ? Module[f]() : 0; } catch (err) { return 0; } }
   function inName() { return gameCall('_bb_ui_mode') === UI_TEXT; }
@@ -1142,20 +1147,41 @@
       nameSeq = seq;
       nameDone = false;
       typed = [];
+      pending = null;
+      sentText = fieldText();  // (what is in the field now is not for this name)
     }
   }
   function openKeyboard() {
     if (touchUi.hidden) return;
-    textInput.value = TEXT_FILL;
+    if (!composing) resetField();
     try {
       textInput.focus({ preventScroll: true });
-      textInput.setSelectionRange(TEXT_FILL.length, TEXT_FILL.length);
+      if (!composing) textInput.setSelectionRange(textInput.value.length, textInput.value.length);
     } catch (err) {}
   }
   function typeNext() {
     typing = 0;
-    if (!inName()) { typed = []; return; }
+    if (!inName()) { typed = []; pending = null; return; }
     syncName();
+    if (pending) {
+      if (gameCall('_bb_ui_text_taken') !== pending.taken) {
+        pending = null;  // taken
+      } else {
+        if (!typingKey && !pending.up) pending.up = performance.now();
+        if (typingKey || performance.now() - pending.up < TYPE_UP) {
+          typing = setTimeout(typeNext, 20);  // still down, or the game may still look
+          return;
+        }
+        // Let go before the game saw it: send it again (a few times at most).
+        if (pending.tries < 8) typed.unshift(pending.key);
+        var tries = pending.tries + 1;
+        pending = null;
+        return sendNext(tries);
+      }
+    }
+    sendNext(0);
+  }
+  function sendNext(tries) {
     if (!typed.length) return;
     // Wait for the game to read keys, and for the page to be back in front.
     if (!gameCall('_bb_ui_text_ready') || !focused || document.hidden) {
@@ -1163,6 +1189,7 @@
       return;
     }
     var k = typingKey = typed.shift();
+    pending = { key: k, taken: gameCall('_bb_ui_text_taken'), tries: tries, up: 0 };
     press(k);
     setTimeout(function () {
       if (typingKey !== k) return;  // already let go by releaseAll()
@@ -1188,7 +1215,7 @@
     // for the name (its Return was lost): OK sends Return again. (Once the
     // game has taken Return it no longer reads keys, and a Return queued
     // then waits and is dropped when the entry ends.)
-    if (nameDone && !typed.length && !typing && !typingKey) nameDone = false;
+    if (nameDone && !typed.length && !typing && !typingKey && !pending) nameDone = false;
     type(domKey(13));
     nameDone = true;
   }
@@ -1233,14 +1260,42 @@
     e.preventDefault();
     e.stopPropagation();
   }, true);
-  textInput.addEventListener('input', function (e) {
-    if (inName()) {
-      if (e.inputType === 'deleteContentBackward' || textInput.value.length < TEXT_FILL.length) type(domKey(8));
-      else if (e.inputType === 'insertLineBreak') finishName();
-      else typeChars(e.data != null ? e.data : textInput.value.slice(TEXT_FILL.length));
-    }
+  // Soft keyboards that only report text, many through composition (a word
+  // being typed is shown and changed before it is committed): what the
+  // field holds once committed is compared with what was already sent, and
+  // the difference goes to the game (letters, or Backspace for deletions).
+  // The field starts with two spaces, so a deletion past the name's start
+  // still shows.
+  var sentText = '', composing = false;
+  function fieldText() {
+    return textInput.value.slice(TEXT_FILL.length).toLowerCase().replace(/[^a-z0-9 ]/g, '');
+  }
+  function resetField() {
     textInput.value = TEXT_FILL;
+    sentText = '';
     try { textInput.setSelectionRange(TEXT_FILL.length, TEXT_FILL.length); } catch (err) {}
+  }
+  function readField() {
+    if (composing) return;
+    if (!inName()) { resetField(); return; }
+    if (textInput.value.length < TEXT_FILL.length) {
+      type(domKey(8));
+      resetField();
+      return;
+    }
+    var now = fieldText(), p = 0;
+    while (p < now.length && p < sentText.length && now[p] === sentText[p]) p++;
+    for (var i = p; i < sentText.length; i++) type(domKey(8));
+    typeChars(now.slice(p));
+    sentText = now;
+    if (textInput.value.length > 40) resetField();
+  }
+  textInput.addEventListener('compositionstart', function () { composing = true; });
+  textInput.addEventListener('compositionend', function () { composing = false; readField(); });
+  textInput.addEventListener('input', function (e) {
+    if (e.isComposing || e.inputType === 'insertCompositionText') return;
+    if (e.inputType === 'insertLineBreak') { finishName(); return; }
+    readField();
   });
 
   function updateTouchUi() {
